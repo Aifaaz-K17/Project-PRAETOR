@@ -59,7 +59,7 @@ Press `Win + X` → select **Windows Terminal** or **PowerShell**.
 ### Step 2: Navigate to the Project
 
 ```powershell
-cd "C:\Users\aifaa\Desktop\Final Year Project\Project Main"
+cd "<your-project-path>\Project Main"
 ```
 
 ### Step 3: Create a Virtual Environment
@@ -85,7 +85,7 @@ Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser
 
 **How to know it worked:** You'll see `(venv)` appear at the beginning of your terminal prompt:
 ```
-(venv) PS C:\Users\aifaa\Desktop\Final Year Project\Project Main>
+(venv) PS <your-project-path>\Project Main>
 ```
 
 ### Step 5: Install All Dependencies
@@ -462,7 +462,7 @@ The `/docs/knowledge/` directory is an **Obsidian-compatible vault** — a colle
 ```
 ============================= test session starts =============================
 platform win32 -- Python 3.14.6, pytest-9.1.1, pluggy-1.6.0
-rootdir: C:\Users\aifaa\Desktop\Final Year Project\Project Main
+rootdir: <your-project-path>\Project Main
 plugins: anyio-4.14.2, langsmith-0.10.18
 collected 3 items
 

@@ -72,4 +72,4 @@ graph TD
 
 ## License
 
-This project is licensed under the MIT License - see the [LICENSE](file:///c:/Users/aifaa/Desktop/Final%20Year%20Project/Project%20Main/LICENSE) file for details.
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
