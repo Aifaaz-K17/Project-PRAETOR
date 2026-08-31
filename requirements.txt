@@ -14,7 +14,7 @@ pydantic==2.13.4
 pyyaml==6.0.3
 
 # Canonicalization (firewall/canonicalize.py — IDNA/punycode host encoding)
-idna==3.18
+idna==3.19
 
 # Policy engine (firewall/policy_engine.py) — regex with a real per-call
 # timeout parameter, which the stdlib `re` module does not support and
