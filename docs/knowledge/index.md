@@ -27,6 +27,7 @@ Welcome to the living architecture and knowledge vault for the **Deterministic A
 - [[0008-canonicalization-before-matching]] — Real filesystem/IDNA resolution over string matching; single percent-decode; label-boundary domain matching; strip vs. reject policy.
 - [[0009-policy-conflict-resolution]] — DENY > NEEDS_APPROVAL > ALLOW > default; why gate-shaped rules must be action: deny.
 - [[0010-policy-integrity-and-loading]] — Load-once SHA-256 hashing, frozen structures, ReDoS static linting + runtime timeout (verified against a real hanging pattern).
+- [[0011-unknown-parameter-enforcement]] — parameter_schema rule type closing the "unknown parameter → DENY" gap in INV-08; opt-in per tool, and why.
 
 ---
 

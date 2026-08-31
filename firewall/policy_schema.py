@@ -129,13 +129,34 @@ class RateRule(_BaseRule):
     window_seconds: float = Field(gt=0)
 
 
+class ParameterSchemaRule(_BaseRule):
+    """Declares the full set of parameter names a tool call is allowed to
+    carry (INV-08: "unknown parameter -> DENY", never an implicit allow).
+
+    `action` and `requires_approval` are inherited from `_BaseRule` but
+    unused by this rule type — always author `action: allow`,
+    `requires_approval: false` by convention; the engine ignores both
+    fields for `parameter_schema` rules (see
+    `firewall/policy_engine.py::_check_unknown_parameters`). Kept on
+    `_BaseRule` rather than given a separate base class to avoid a second
+    schema hierarchy for one rule type — see ADR 0011.
+    """
+
+    type: Literal["parameter_schema"]
+    known_parameters: tuple[str, ...] = Field(
+        min_length=1,
+        description="Every parameter name this tool's calls may legitimately carry.",
+    )
+
+
 PolicyRule = Annotated[
     ParameterBoundsRule
     | PathScopeRule
     | DomainAllowlistRule
     | SequenceRule
     | RbacRule
-    | RateRule,
+    | RateRule
+    | ParameterSchemaRule,
     Field(discriminator="type"),
 ]
 

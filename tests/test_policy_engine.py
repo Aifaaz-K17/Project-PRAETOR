@@ -28,6 +28,7 @@ from firewall.policy_engine import (
 )
 from firewall.policy_schema import (
     ParameterBoundsRule,
+    ParameterSchemaRule,
     PathScopeRule,
     PolicySet,
     RbacRule,
@@ -267,7 +268,11 @@ def test_yaml_load_never_uses_unsafe_loader() -> None:
 
 def test_real_policies_directory_loads_cleanly() -> None:
     loaded = load_policy_set(REAL_POLICY_DIR)
-    assert 20 <= len(loaded.policy_set.rules) <= 25
+    # 20-25 was Phase 3's original scope; the upper bound was deliberately
+    # raised to fit the 5 parameter_schema rules (INV-08 unknown-parameter
+    # enforcement) added afterward — a documented, reviewed expansion, not
+    # unbounded policy sprawl.
+    assert 20 <= len(loaded.policy_set.rules) <= 35
     assert loaded.policy_set.default_action == RuleAction.DENY
 
 
@@ -609,11 +614,27 @@ def test_INV_09_runtime_timeout_surfaces_as_deny_through_evaluate_call() -> None
 
 
 def _load_single_real_rule(rule_id: str) -> LoadedPolicySet:
+    """Isolates one real shipped rule for testing — plus, since
+    firewall/policy_engine.py's unknown-parameter check (INV-08) is
+    enforced per tool once any parameter_schema rule for that tool is
+    present, also pulls in the real schema rule(s) for the same tool.
+    Without this, every isolated test here would deny on "unknown
+    parameter" before the rule under test ever got a chance to run.
+    """
     real = load_policy_set(REAL_POLICY_DIR)
     rule = next(r for r in real.policy_set.rules if r.id == rule_id)
+    schema_rules = tuple(
+        r
+        for r in real.policy_set.rules
+        if isinstance(r, ParameterSchemaRule)
+        and r.id != rule.id
+        and (r.tool == rule.tool or r.tool == "*" or rule.tool == "*")
+    )
     compiled = {k: v for k, v in real.compiled_patterns.items() if k == rule_id}
     return LoadedPolicySet(
-        policy_set=PolicySet(default_action=RuleAction.DENY, rules=(rule,)),
+        policy_set=PolicySet(
+            default_action=RuleAction.DENY, rules=(rule, *schema_rules)
+        ),
         policy_set_hash="test",
         compiled_patterns=compiled,
     )
@@ -944,6 +965,133 @@ def test_policy_rate_limits(rule_id: str, tool_name: str, max_calls: int) -> Non
     at_limit = evaluate_call(under_limit_call, loaded, session_history=history)
     assert at_limit.outcome == Outcome.DENY
     assert at_limit.rule_id == rule_id
+
+
+# ---------------------------------------------------------------------------
+# parameter_schema — INV-08 "unknown parameter -> DENY"
+# ---------------------------------------------------------------------------
+
+
+def test_INV_08_unknown_parameter_denied_when_schema_declared() -> None:
+    """The core new behavior: a call carrying a parameter no
+    parameter_schema rule declares for that tool is denied outright, even
+    though every parameter it also carries would otherwise be fine."""
+    loaded = _load_single_real_rule("schema-transfer-funds")
+    decision = evaluate_call(
+        make_call(
+            tool_name="transfer_funds",
+            args={
+                "amount": 100,
+                "note": "rent",
+                "destination_account": "attacker-acct",
+            },
+        ),
+        loaded,
+    )
+    assert decision.outcome == Outcome.DENY
+    assert "destination_account" in decision.reason
+    assert "unknown parameter" in decision.reason
+
+
+def test_INV_08_known_parameters_pass_the_schema_check() -> None:
+    loaded = _load_single_real_rule("schema-transfer-funds")
+    decision = evaluate_call(
+        make_call(tool_name="transfer_funds", args={"amount": 100, "note": "rent"}),
+        loaded,
+    )
+    # No other rule in this isolated set votes ALLOW, so it falls through
+    # to default — the point here is only that it does NOT get denied for
+    # "unknown parameter", proving the schema check itself passed.
+    assert "unknown parameter" not in decision.reason
+
+
+def test_INV_08_schema_check_runs_before_any_other_rule() -> None:
+    """An unknown parameter must deny the call even when a broader ALLOW
+    rule (e.g. RBAC) would otherwise have let it through — the schema
+    check is consulted first, not as just another vote."""
+    schema_rule = ParameterSchemaRule.model_validate(
+        {
+            "type": "parameter_schema",
+            "id": "schema-x",
+            "tool": "x",
+            "action": "allow",
+            "known_parameters": ["a"],
+        }
+    )
+    allow_rule = RbacRule.model_validate(
+        {
+            "type": "rbac",
+            "id": "allow-r",
+            "tool": "x",
+            "action": "allow",
+            "roles": ["admin"],
+        }
+    )
+    loaded = _rules_loaded((schema_rule, allow_rule))
+    decision = evaluate_call(
+        make_call(tool_name="x", role="admin", args={"a": 1, "b": 2}), loaded
+    )
+    assert decision.outcome == Outcome.DENY
+    assert "unknown parameter" in decision.reason
+
+
+def test_INV_08_tool_without_any_schema_rule_is_not_checked() -> None:
+    """Enforcement is opt-in per tool (documented in
+    _check_unknown_parameters' docstring and LIMITATIONS.md): a tool with
+    no parameter_schema rule declared in the loaded set isn't subject to
+    this check at all, so pre-existing synthetic test scenarios that never
+    declare one keep working unmodified."""
+    allow_rule = RbacRule.model_validate(
+        {
+            "type": "rbac",
+            "id": "allow-r",
+            "tool": "x",
+            "action": "allow",
+            "roles": ["admin"],
+        }
+    )
+    loaded = _rules_loaded((allow_rule,))
+    decision = evaluate_call(
+        make_call(tool_name="x", role="admin", args={"anything": "goes", "here": 1}),
+        loaded,
+    )
+    assert decision.outcome == Outcome.ALLOW
+
+
+@pytest.mark.parametrize(
+    "rule_id,tool_name,known_args",
+    [
+        ("schema-read-file", "read_file", {"path": "notes.txt"}),
+        (
+            "schema-send-email",
+            "send_email",
+            {"to": "a@corp.example.com", "subject": "s", "body": "b"},
+        ),
+        (
+            "schema-search-web",
+            "search_web",
+            {"query": "q", "target_host": "wikipedia.org"},
+        ),
+        ("schema-transfer-funds", "transfer_funds", {"amount": 10, "note": "n"}),
+        (
+            "schema-compose-draft",
+            "compose_draft",
+            {"subject": "s", "body": "b", "attachment_path": "sandbox/notes.txt"},
+        ),
+    ],
+)
+def test_policy_parameter_schema_rules(
+    rule_id: str, tool_name: str, known_args: dict
+) -> None:
+    loaded = _load_single_real_rule(rule_id)
+    ok = evaluate_call(make_call(tool_name=tool_name, args=known_args), loaded)
+    assert "unknown parameter" not in ok.reason
+
+    bad_args = dict(known_args)
+    bad_args["totally_unexpected_field"] = "x"
+    denied = evaluate_call(make_call(tool_name=tool_name, args=bad_args), loaded)
+    assert denied.outcome == Outcome.DENY
+    assert "unknown parameter" in denied.reason
 
 
 def test_all_shipped_rules_have_at_least_one_test() -> None:

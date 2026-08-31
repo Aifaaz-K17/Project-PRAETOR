@@ -38,6 +38,7 @@ from firewall.interceptor import CallRecord, Decision
 from firewall.policy_schema import (
     DomainAllowlistRule,
     ParameterBoundsRule,
+    ParameterSchemaRule,
     PathScopeRule,
     PolicyRule,
     PolicySet,
@@ -249,6 +250,41 @@ def _rule_applies_to_tool(rule: PolicyRule, tool_name: str) -> bool:
     return rule.tool == "*" or rule.tool == tool_name
 
 
+def _check_unknown_parameters(call: CallRecord, loaded: LoadedPolicySet) -> str | None:
+    """INV-08: "unknown parameter -> DENY, never an implicit allow."
+
+    Enforcement is opt-in per tool: a tool with at least one
+    `parameter_schema` rule in the loaded policy set must have every
+    argument on the call declared in `known_parameters` (the union across
+    every matching schema rule), or the call is denied outright. A tool
+    with *no* `parameter_schema` rule declared in the loaded set is not
+    checked here at all — deliberately, not an oversight (see
+    LIMITATIONS.md and ADR 0011): a blanket "every tool must have a schema
+    or nothing gets through" would also fire inside every test that
+    builds a small synthetic rule set to isolate one piece of conflict-
+    resolution logic, breaking tests that were never exercising this
+    feature. All five tools this project ships policies for
+    (`policies/parameter_schema.yaml`) do declare one.
+    """
+    schema_rules = [
+        rule
+        for rule in loaded.policy_set.rules
+        if isinstance(rule, ParameterSchemaRule)
+        and _rule_applies_to_tool(rule, call.tool_name)
+    ]
+    if not schema_rules:
+        return None
+
+    known: set[str] = set()
+    for rule in schema_rules:
+        known.update(rule.known_parameters)
+
+    unknown = sorted(set(call.canonical_args.keys()) - known)
+    if unknown:
+        return f"unknown parameter(s) for tool {call.tool_name!r}: {unknown}"
+    return None
+
+
 def _matches_parameter_bounds(
     rule: ParameterBoundsRule,
     call: CallRecord,
@@ -409,11 +445,18 @@ def evaluate_call(
     except PolicyBoundsExceeded as exc:
         return Decision.deny(reason=f"POLICY_ERROR: {exc}")
 
+    unknown_parameter_reason = _check_unknown_parameters(call, loaded)
+    if unknown_parameter_reason is not None:
+        return Decision.deny(reason=unknown_parameter_reason)
+
     matched_deny: PolicyRule | None = None
     matched_needs_approval: PolicyRule | None = None
     matched_allow: PolicyRule | None = None
 
     for rule in loaded.policy_set.rules:
+        if isinstance(rule, ParameterSchemaRule):
+            # Consulted once, upfront, above — not a normal ALLOW/DENY vote.
+            continue
         if not _rule_applies_to_tool(rule, call.tool_name):
             continue
 

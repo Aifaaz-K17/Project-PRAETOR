@@ -227,17 +227,28 @@ commit details.
   (uses `monkeypatch.chdir` to a `tmp_path` and confirms the real rule
   still resolves correctly).
 
-**Confirmed but left open — needs a design decision, not a quick patch:**
-- **"Unknown parameter → DENY" (INV-08's literal text) isn't structurally
-  enforced.** The engine only evaluates rules that name a specific
-  parameter; any argument no rule inspects passes through completely
-  unexamined. Fixing this properly needs a new concept — e.g. a rule type
-  or schema declaring each tool's full expected parameter set — which is
-  a real design decision (how strict, whether it's per-tool-mandatory or
-  opt-in, how it interacts with rules that already exist) rather than a
-  bug with one obvious correct fix. Not addressed in this pass; flagged
-  for a deliberate decision before Phase 6 gives the demo tools real
-  parameter schemas to make this concrete.
+**Resolved (2026-08-31), was left open in the code-review-fix pass above:**
+- ~~"Unknown parameter → DENY" (INV-08's literal text) isn't structurally
+  enforced~~ — fixed via a new `parameter_schema` rule type
+  (`firewall.policy_engine._check_unknown_parameters`, consulted before
+  any other rule) plus `policies/parameter_schema.yaml` declaring the
+  full known-parameter set for all five shipped tools. See ADR
+  [`0011-unknown-parameter-enforcement`](docs/knowledge/decisions/0011-unknown-parameter-enforcement.md)
+  for the design (and why a blanket, no-opt-out version was rejected —
+  it would have broken every synthetic-rule-set test that predates this
+  feature).
+- **Still a real, honest scoping limit, not fully closed:** enforcement
+  is opt-in per tool — a tool with zero `parameter_schema` rules in the
+  loaded policy set isn't checked at all, so the invariant is only as
+  strong as policy authors' discipline about declaring a schema for every
+  new tool. `test_all_shipped_rules_have_at_least_one_test` catches a
+  schema rule added with no test; nothing yet catches a tool referenced
+  in `policies/*.yaml` with no schema rule at all. A stronger structural
+  guard for that is a reasonable follow-up, not built here.
+- `ParameterSchemaRule.action`/`.requires_approval` exist only for schema
+  uniformity with the other six rule types and are silently ignored by
+  the engine — setting `requires_approval: true` on one does nothing, and
+  nothing currently validates against that footgun.
 
 - **`sequence` and `rate` rules need real session call history, which
   doesn't exist yet.** `PolicyEngine.evaluate()` — the adapter the live

@@ -152,6 +152,31 @@ Matches when this call would push the count of same-tool calls within the
 last `window_seconds` to or past `max_calls`. Same Phase 3 scope note as
 `sequence` applies — needs real session history.
 
+### `parameter_schema` — is every argument on this call expected at all?
+
+```yaml
+- type: parameter_schema
+  id: schema-transfer-funds
+  tool: transfer_funds
+  action: allow   # unused by this rule type, present for schema uniformity
+  known_parameters: ["amount", "note"]
+```
+
+Not a normal voting rule — consulted once, upfront, before any other rule
+runs. Declares the complete set of parameter names a tool's calls may
+carry. A call with any argument not in `known_parameters` is denied
+outright, regardless of what any other rule would have said (INV-08:
+"unknown parameter → DENY, never an implicit allow" — see ADR 0011 for
+the full story of why this needed its own rule type).
+
+**Enforcement is opt-in per tool**: a tool with zero `parameter_schema`
+rules isn't checked at all. In practice every tool this project ships
+policies for has one — `policies/parameter_schema.yaml` — so treat
+"every real tool gets a schema" as the actual rule to follow, not an
+optional extra. When you add a new tool to any other policy file, add its
+`parameter_schema` entry at the same time, listing every parameter name
+that tool's calls will ever legitimately carry.
+
 ---
 
 ## Which way should `action` point?
@@ -184,8 +209,11 @@ otherwise be allowed by a broader rule?" Granting → `allow`. Blocking →
 
 ## Conflict resolution — which rule wins?
 
-Every rule whose `tool` matches the call is checked. Among everything that
-matches:
+`parameter_schema` is checked first, before anything below: an unknown
+parameter denies the call immediately, and no other rule gets a say (ADR
+0011). Assuming that passes (or no schema is declared for the tool),
+every remaining rule whose `tool` matches the call is checked. Among
+everything that matches:
 
 1. **Any `DENY` wins**, full stop.
 2. Otherwise, **any `NEEDS_APPROVAL`** (an `allow` rule with
