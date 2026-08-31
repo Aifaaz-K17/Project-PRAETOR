@@ -1,6 +1,6 @@
 # Praetor — Project Progress Tracking
 
-## Current Status: Phase 1 Complete (2026-08-31)
+## Current Status: Phase 2 Complete (2026-08-31)
 
 Phase plan below supersedes the earlier 0–8 outline: Phase 2 is now a
 dedicated Canonicalization layer, built and tested before the policy
@@ -74,11 +74,50 @@ engine ever sees a raw argument.
   Windows by blocking `socket.socket` itself instead of just outbound
   connections).
 
-### [ ] PHASE 2 — Canonicalization Layer
-- `firewall/canonicalize.py`: `canonical_path`, `canonical_host`,
-  `canonical_email`, `canonical_text`, all returning `Canonical[T]`.
-- `tests/fixtures/bypass_corpus.yaml` (40+ entries), ADR
-  0007-canonicalization-before-matching.
+### [x] PHASE 2 — Canonicalization Layer
+- **Completed**: 2026-08-31
+- `firewall/canonicalize.py`: `Canonical[T]` wrapper; `canonical_path`
+  (real `Path.resolve()` + `Path.is_relative_to` containment, never string
+  manipulation), `canonical_host` (IDNA/punycode, NFKC, userinfo/port
+  rejection) + `matches_domain_allowlist` (label-boundary matching),
+  `canonical_email`/`canonical_email_list` (display-name-spoofing
+  rejection, all-recipients-must-pass), `canonical_text` (NFKC, zero-
+  width/bidi stripping, single percent-decode with residual-encoding
+  rejection, reject-not-truncate length cap).
+- `tests/fixtures/bypass_corpus.yaml`: 44 entries (path/host/email/text),
+  deliberately excluding any input with a NUL byte, control character,
+  CRLF, or zero-width/bidi character — those are explicit Python tests
+  instead, for source auditability (same reasoning applied to
+  `canonicalize.py`'s own zero-width character set, built from integer
+  code points via `chr()` rather than literal/escaped characters).
+- `tests/test_canonicalize.py`: the corpus runner plus ~25 additional
+  dynamic tests (NUL/control/CRLF/zero-width cases, absolute-path escape,
+  the exact `/data` vs `/data-evil` string-prefix bug, symlink-to-parent,
+  Windows-only backslash traversal, UNC-prefix rejection). 69 tests in
+  this file alone (68 passed + 1 skipped — symlink test needs Windows
+  Developer Mode locally; runs for real in CI).
+- ADR [`0008-canonicalization-before-matching`](docs/knowledge/decisions/0008-canonicalization-before-matching.md)
+  (renumbered from the suggested 0007 — see the ADR's numbering note).
+- Added `idna==3.18` as a new pinned direct dependency (was previously
+  only a transitive one).
+- **Real bug found and fixed during this phase**: `_single_percent_decode`
+  called `urllib.parse.unquote(value, errors="strict")` without catching
+  `UnicodeDecodeError` — a malformed percent-encoded byte (e.g. `%ff`,
+  not valid standalone UTF-8) would crash the caller instead of cleanly
+  denying. Fixed by catching it and treating it as a rejection.
+- **Real bug found and fixed via bandit**: `canonical_email_list` used a
+  bare `assert` to narrow a type for mypy — `assert` is stripped under
+  `python -O`, silently removing that safeguard. Replaced with an
+  explicit, non-optimizable `if ... raise RuntimeError(...)`.
+- **Verified locally**: `ruff check .`, `black --check .`, `mypy firewall/`,
+  `pytest -v` (103 passed, 1 skipped across the whole suite), `pip-audit`
+  (0 vulns), `bandit -r firewall/` (0 issues) — see phase summary in
+  conversation for full pasted output.
+- **Known issues**: see `LIMITATIONS.md` Phase 2 section — email domains
+  as IP-literals-in-brackets aren't supported, the symlink test's local
+  skip on Windows, the Windows-only backslash-traversal test, and the
+  scope of the homoglyph/zero-width coverage (specific verified cases,
+  not exhaustive Unicode confusables coverage).
 
 ### [ ] PHASE 3 — Policy Engine
 - `firewall/policy_engine.py` + `firewall/policy_schema.py` (Pydantic v2).
@@ -125,4 +164,5 @@ engine ever sees a raw argument.
   force-pushed over. First real GitHub Actions run still needs to be
   checked by hand once the push completes.
 - Phase 1 verification commands all actually run — see command list above.
-- Ready to proceed to Phase 2 (Canonicalization Layer) upon confirmation.
+- Phase 2 verification commands all actually run — see command list above.
+- Ready to proceed to Phase 3 (Policy Engine) upon confirmation.

@@ -1,0 +1,420 @@
+# Bypass corpus for firewall/canonicalize.py (Phase 2, INV-06).
+#
+# Each entry is parametrized into a test by tests/test_canonicalize.py.
+# Schema:
+#   id                     unique slug
+#   category                short grouping label
+#   canonicalizer            path | host | email | email_list | text
+#   description               what technique this is and why it should (or
+#                              should not) be blocked
+#   input                     the raw value passed to the canonicalizer
+#   expect                    allow | deny | allow_contained
+#                             (allow_contained is path-only: accepted AND the
+#                              resolved path must stay inside the sandbox —
+#                              some entries below are "attacks" against a
+#                              naive string-stripping sanitizer that this
+#                              design was never vulnerable to in the first
+#                              place, because it does real filesystem
+#                              resolution, not string manipulation; those are
+#                              expect: allow_contained with an explanatory
+#                              description, not silently omitted)
+#   expected_canonical        (host/email/email_list/text, expect: allow
+#                              only) the exact expected canonical value
+#   check_allowlist_against   (host only) run matches_domain_allowlist(host,
+#                              this) after canonicalizing
+#   expect_allowlist_match    (host only, paired with the above) expected
+#                              boolean result
+#
+# Deliberately NOT included here: any input containing a raw NUL byte,
+# other control character, CR/LF, or zero-width/bidi character. Those are
+# covered as explicit Python test functions in test_canonicalize.py using
+# Python's own unambiguous \x00/\r\n/chr() escapes instead — the same
+# auditability reasoning as firewall/canonicalize.py's own source: an
+# invisible or control character sitting directly in a text fixture file is
+# something a reviewer (or a diff, or a text editor) could silently mangle
+# or fail to notice. This file only contains printable, visually-inspectable
+# strings.
+
+- id: path_dotdot_basic
+  category: path_traversal
+  canonicalizer: path
+  description: Classic single-level parent-directory traversal.
+  input: "../outside/secret.txt"
+  expect: deny
+
+- id: path_dotdot_single_percent_encoded
+  category: path_traversal_encoded
+  canonicalizer: path
+  description: "../ encoded once as %2e%2e%2f style single percent-encoding."
+  input: "..%2foutside%2fsecret.txt"
+  expect: deny
+
+- id: path_dotdot_double_percent_encoded
+  category: path_traversal_double_encoded
+  canonicalizer: path
+  description: >
+    Double-encoded traversal (%25 decodes to a literal %, leaving a
+    residual %2f) — must be denied for residual encoding, not decoded
+    again in a loop.
+  input: "..%252foutside%252fsecret.txt"
+  expect: deny
+
+- id: path_dotdot_mixed_case_percent
+  category: path_traversal_encoded
+  canonicalizer: path
+  description: Percent-encoding with uppercase hex digits.
+  input: "..%2Foutside%2Fsecret.txt"
+  expect: deny
+
+- id: path_quad_dot_slash_trick
+  category: path_traversal_naive_filter_bypass
+  canonicalizer: path
+  description: >
+    The classic bypass against a sanitizer that naively strips the literal
+    substring "../" once (stripping one "../" from "....//" leaves "../"
+    behind). This design was never vulnerable to that class of bug in the
+    first place, because it resolves the real filesystem path instead of
+    manipulating strings — "...." is just a literal (here, nonexistent)
+    directory name, so this stays contained rather than escaping.
+  input: "....//....//outside/secret.txt"
+  expect: allow_contained
+
+- id: path_deep_dotdot_traversal
+  category: path_traversal
+  canonicalizer: path
+  description: Many levels of parent traversal attempting to reach the filesystem root.
+  input: "../../../../../../etc/passwd"
+  expect: deny
+
+- id: path_dotdot_in_middle
+  category: path_traversal
+  canonicalizer: path
+  description: Traversal sequence appearing after a legitimate-looking subdirectory.
+  input: "subdir/../../outside/secret.txt"
+  expect: deny
+
+- id: path_dotdot_trailing_slash
+  category: path_traversal
+  canonicalizer: path
+  description: Traversal with a trailing slash after the target file.
+  input: "../outside/secret.txt/"
+  expect: deny
+
+- id: path_unicode_fullwidth_dot
+  category: path_traversal_unicode_homoglyph
+  canonicalizer: path
+  description: >
+    Fullwidth Unicode punctuation (U+FF0E FULLWIDTH FULL STOP, U+FF0F
+    FULLWIDTH SOLIDUS) is not interpreted as "../" by any real filesystem
+    API — it remains a literal, harmless path component under the sandbox
+    root rather than traversing anywhere.
+  input: "．．／outside/secret.txt"
+  expect: allow_contained
+
+- id: path_benign_simple_file
+  category: path_negative_control
+  canonicalizer: path
+  description: A perfectly ordinary in-root file path — must be allowed.
+  input: "notes.txt"
+  expect: allow_contained
+
+- id: path_benign_subdir_file
+  category: path_negative_control
+  canonicalizer: path
+  description: An ordinary file inside a subdirectory of the sandbox root.
+  input: "subdir/file.txt"
+  expect: allow_contained
+
+- id: host_basic_lowercase
+  category: host_normalization
+  canonicalizer: host
+  description: A plain already-lowercase hostname.
+  input: "example.com"
+  expect: allow
+  expected_canonical: "example.com"
+
+- id: host_uppercase_normalized
+  category: host_normalization
+  canonicalizer: host
+  description: Uppercase hostnames must normalize to lowercase.
+  input: "EXAMPLE.COM"
+  expect: allow
+  expected_canonical: "example.com"
+
+- id: host_trailing_dot_fqdn
+  category: host_normalization
+  canonicalizer: host
+  description: A trailing-dot fully-qualified domain name must normalize the same as without the dot.
+  input: "example.com."
+  expect: allow
+  expected_canonical: "example.com"
+
+- id: host_leading_trailing_whitespace
+  category: host_normalization
+  canonicalizer: host
+  description: Surrounding whitespace must be stripped.
+  input: "  example.com  "
+  expect: allow
+  expected_canonical: "example.com"
+
+- id: host_notevil_not_matching
+  category: host_allowlist_label_boundary
+  canonicalizer: host
+  description: >
+    "notevil.com" must never match an allowlist rule for "evil.com" — this
+    is the exact string-suffix bug a naive `.endswith("evil.com")` check
+    would fall for.
+  input: "notevil.com"
+  expect: allow
+  expected_canonical: "notevil.com"
+  check_allowlist_against: "evil.com"
+  expect_allowlist_match: false
+
+- id: host_evil_subdomain_attacker_net_not_matching
+  category: host_allowlist_label_boundary
+  canonicalizer: host
+  description: >
+    "evil.com.attacker.net" must never match an allowlist rule for
+    "evil.com" — this is the bug a naive `.startswith("evil.com")` or
+    substring check would fall for.
+  input: "evil.com.attacker.net"
+  expect: allow
+  expected_canonical: "evil.com.attacker.net"
+  check_allowlist_against: "evil.com"
+  expect_allowlist_match: false
+
+- id: host_exact_match_evil
+  category: host_allowlist_label_boundary
+  canonicalizer: host
+  description: The domain itself must match its own allowlist rule.
+  input: "evil.com"
+  expect: allow
+  expected_canonical: "evil.com"
+  check_allowlist_against: "evil.com"
+  expect_allowlist_match: true
+
+- id: host_proper_subdomain_match
+  category: host_allowlist_label_boundary
+  canonicalizer: host
+  description: A genuine subdomain (on a label boundary) must match.
+  input: "mail.evil.com"
+  expect: allow
+  expected_canonical: "mail.evil.com"
+  check_allowlist_against: "evil.com"
+  expect_allowlist_match: true
+
+- id: host_punycode_input_passthrough
+  category: host_idna
+  canonicalizer: host
+  description: A hostname already given in punycode form must pass through unchanged.
+  input: "xn--e1aybc.xn--p1ai"
+  expect: allow
+  expected_canonical: "xn--e1aybc.xn--p1ai"
+
+- id: host_unicode_homoglyph_domain
+  category: host_idna_homoglyph
+  canonicalizer: host
+  description: >
+    A Cyrillic homoglyph of "apple.com" (Cyrillic "а" U+0430 in place of
+    Latin "a") IDNA-encodes to a different xn-- string than the ASCII
+    original, so it correctly fails to match an "apple.com" allowlist
+    rule — the defense is that it simply doesn't match, not that it gets
+    "fixed" into looking the same.
+  input: "аpple.com"
+  expect: allow
+  expected_canonical: "xn--pple-43d.com"
+  check_allowlist_against: "apple.com"
+  expect_allowlist_match: false
+
+- id: host_embedded_credentials_userinfo
+  category: host_userinfo_injection
+  canonicalizer: host
+  description: A trusted-looking name before an "@" with the real (attacker) host after it.
+  input: "trusted.com@evil.com"
+  expect: deny
+
+- id: host_userinfo_colon_trick
+  category: host_userinfo_injection
+  canonicalizer: host
+  description: Classic user:pass@host userinfo injection.
+  input: "user:pass@evil.com"
+  expect: deny
+
+- id: host_port_confusion
+  category: host_userinfo_injection
+  canonicalizer: host
+  description: A colon used to smuggle a second host-like token.
+  input: "trusted.com:evil.com"
+  expect: deny
+
+- id: host_ip_literal_decimal
+  category: host_ip_literal
+  canonicalizer: host
+  description: >
+    A decimal-encoded IP address (a known SSRF obfuscation technique). It
+    canonicalizes as an ordinary (if unusual) label — the real defense is
+    that it cannot match any legitimate domain's allowlist rule.
+  input: "3232235521"
+  expect: allow
+  expected_canonical: "3232235521"
+  check_allowlist_against: "evil.com"
+  expect_allowlist_match: false
+
+- id: host_ip_literal_dotted
+  category: host_ip_literal
+  canonicalizer: host
+  description: A plain dotted-decimal IP address given as a hostname.
+  input: "192.168.1.1"
+  expect: allow
+  expected_canonical: "192.168.1.1"
+  check_allowlist_against: "evil.com"
+  expect_allowlist_match: false
+
+- id: host_empty_string
+  category: host_malformed
+  canonicalizer: host
+  description: An empty host value must be rejected.
+  input: ""
+  expect: deny
+
+- id: host_whitespace_only
+  category: host_malformed
+  canonicalizer: host
+  description: A whitespace-only host value must be rejected.
+  input: "   "
+  expect: deny
+
+- id: host_slash_present
+  category: host_malformed
+  canonicalizer: host
+  description: A host value must never contain a path component.
+  input: "evil.com/path"
+  expect: deny
+
+- id: host_case_insensitive_allowlist_match
+  category: host_allowlist_label_boundary
+  canonicalizer: host
+  description: Allowlist matching must be case-insensitive after canonicalization.
+  input: "EVIL.COM"
+  expect: allow
+  expected_canonical: "evil.com"
+  check_allowlist_against: "evil.com"
+  expect_allowlist_match: true
+
+- id: email_basic_valid
+  category: email_normalization
+  canonicalizer: email
+  description: A plain, valid email address.
+  input: "user@example.com"
+  expect: allow
+  expected_canonical: "user@example.com"
+
+- id: email_uppercase_domain_normalized
+  category: email_normalization
+  canonicalizer: email
+  description: The domain part of an email must lowercase like a bare host does.
+  input: "user@EXAMPLE.COM"
+  expect: allow
+  expected_canonical: "user@example.com"
+
+- id: email_display_name_spoofing
+  category: email_display_name_spoofing
+  canonicalizer: email
+  description: >
+    A display name crafted to look like the real, trusted recipient, with
+    the actual delivery address being the attacker's. Rejected outright
+    (fail closed) rather than silently trusting parseaddr's split, because
+    a human approver reading only the display name would be deceived.
+  input: '"admin@corp.com" <attacker@evil.com>'
+  expect: deny
+
+- id: email_legit_display_name
+  category: email_negative_control
+  canonicalizer: email
+  description: An ordinary, non-spoofing display name must be accepted.
+  input: '"Alice Smith" <alice@example.com>'
+  expect: allow
+  expected_canonical: "alice@example.com"
+
+- id: email_invalid_no_at
+  category: email_malformed
+  canonicalizer: email
+  description: A value with no "@" at all is not an email address.
+  input: "not-an-email"
+  expect: deny
+
+- id: email_empty
+  category: email_malformed
+  canonicalizer: email
+  description: An empty email value must be rejected.
+  input: ""
+  expect: deny
+
+- id: email_list_all_valid
+  category: email_list_negative_control
+  canonicalizer: email_list
+  description: A comma-separated list of ordinary, valid recipients.
+  input: "alice@example.com, bob@example.com"
+  expect: allow
+  expected_canonical: ["alice@example.com", "bob@example.com"]
+
+- id: email_list_one_bad_fails_all
+  category: email_list_all_must_pass
+  canonicalizer: email_list
+  description: >
+    One malformed recipient must fail the entire field, not be silently
+    dropped while the good ones pass (INV-06: a rejection is a DENY).
+  input: "alice@example.com, not-an-email"
+  expect: deny
+
+- id: email_list_bcc_smuggling_attempt
+  category: email_list_bcc_smuggling
+  canonicalizer: email_list
+  description: >
+    A spoofed recipient smuggled in among otherwise-legitimate addresses —
+    the whole field must be denied, so a bcc/cc list can't be used to
+    sneak a deceptive address past a reviewer skimming the legitimate ones.
+  input: 'alice@example.com, "admin@corp.com" <attacker@evil.com>'
+  expect: deny
+
+- id: email_list_quoted_comma_display_name
+  category: email_list_parsing
+  canonicalizer: email_list
+  description: >
+    A display name that itself contains a comma, inside quotes — must be
+    parsed correctly (via email.utils.getaddresses) rather than split
+    naively on every comma.
+  input: '"Smith, Alice" <alice@example.com>, bob@example.com'
+  expect: allow
+  expected_canonical: ["alice@example.com", "bob@example.com"]
+
+- id: text_basic_passthrough
+  category: text_normalization
+  canonicalizer: text
+  description: Ordinary ASCII text passes through unchanged.
+  input: "hello world"
+  expect: allow
+  expected_canonical: "hello world"
+
+- id: text_percent_encoded_basic
+  category: text_percent_decoding
+  canonicalizer: text
+  description: A single layer of percent-encoding is decoded.
+  input: "hello%20world"
+  expect: allow
+  expected_canonical: "hello world"
+
+- id: text_percent_double_encoded_residual
+  category: text_percent_decoding_residual
+  canonicalizer: text
+  description: Double percent-encoding must be denied for residual encoding, never decoded twice.
+  input: "hello%2520world"
+  expect: deny
+
+- id: text_nfkc_normalization
+  category: text_nfkc
+  canonicalizer: text
+  description: A fullwidth-form character must NFKC-normalize to its ordinary ASCII equivalent.
+  input: "＄100"
+  expect: allow
+  expected_canonical: "$100"

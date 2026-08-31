@@ -9,6 +9,7 @@ In-process YAML-driven policy evaluator that parses policy rules and evaluates t
 
 ## Depends on
 - [[interception-layer]] — Receives tool calls from the wrapper.
+- [[canonicalization]] — Will only ever evaluate `Canonical[T]` values, never raw arguments (INV-06).
 
 ## Used by
 - [[action-firewall]] — Primary decision engine.

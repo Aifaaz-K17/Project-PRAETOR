@@ -103,3 +103,41 @@
   `connect`/`connect_ex` to non-loopback addresses instead — a more
   accurate reading of INV-14 ("no live targets") in any case. See
   `conftest.py`'s docstring for the full explanation.
+
+## Phase 2 — Canonicalization Layer
+
+- `canonical_email`/`canonical_email_list` canonicalize the domain part via
+  `canonical_host`, which validates a *bare hostname* only. This means an
+  IP-literal email domain in brackets (`user@[192.168.1.1]`, valid per RFC
+  5321) is rejected as an invalid host rather than specifically supported.
+  Not fabricated as "handled" — just not a case any of the Phase 6 demo
+  tools are expected to need.
+- `test_INV_06_path_symlink_to_parent_denied` **skips on this Windows dev
+  machine** (creating a symlink via `os.symlink` needs Developer Mode or
+  admin privileges here) rather than failing the whole suite. It runs for
+  real in CI (`ubuntu-latest` per `.github/workflows/ci.yml`), which is
+  the platform that matters most for this control's actual evidence —
+  meaning the strongest local proof of symlink-traversal denial currently
+  only exists once CI has actually run (see the Phase 0 note above about
+  CI not yet having executed on GitHub).
+- `test_INV_06_path_windows_backslash_traversal_denied` only runs on
+  Windows (`os.name != "nt"` skip) — backslash is not a path separator on
+  POSIX, so a backslash-based traversal attempt isn't a meaningful attack
+  there either. This is a genuine, documented platform asymmetry, not an
+  untested gap.
+- `matches_domain_allowlist` is implemented and tested in Phase 2 (ahead
+  of Phase 3's policy engine, which is its actual caller) because the
+  bypass corpus needed a home for the label-boundary matching cases now.
+  It is not itself a policy rule — Phase 3's `domain_allowlist` rule type
+  will call it.
+- The Cyrillic-homoglyph corpus entry
+  (`host_unicode_homoglyph_domain`) demonstrates exactly one homoglyph
+  technique (a single substituted Cyrillic character) against exactly one
+  domain. It is evidence that IDNA-encoding correctly fails to match a
+  *specific* crafted lookalike, not a general claim that every possible
+  homoglyph/confusable-character technique is covered — no confusables
+  table is implemented (see ADR 0008 "Alternatives considered").
+- `canonical_text`'s zero-width/bidi character set (21 code points across
+  four ranges) covers the well-known formatting-character families; it is
+  not a claim of covering every Unicode code point with zero visible
+  width, which is a larger and still-growing set.

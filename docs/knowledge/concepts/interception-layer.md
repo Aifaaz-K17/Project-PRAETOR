@@ -28,6 +28,7 @@ so a policy hook can't affect what actually executes (INV-07).
 - [[action-firewall]] — Conceptual blueprint.
 
 ## Used by
+- [[canonicalization]] — Normalizes `CallRecord.raw_args` before the policy engine sees them.
 - [[policy-engine]] — Will receive `CallRecord`s via the `Evaluator` seam (Phase 3).
 
 ## Key decisions
