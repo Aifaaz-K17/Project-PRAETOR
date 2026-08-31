@@ -1,6 +1,6 @@
 # Praetor — Project Progress Tracking
 
-## Current Status: Phase 2 Complete (2026-08-31)
+## Current Status: Phase 3 Complete (2026-08-31)
 
 Phase plan below supersedes the earlier 0–8 outline: Phase 2 is now a
 dedicated Canonicalization layer, built and tested before the policy
@@ -119,12 +119,59 @@ engine ever sees a raw argument.
   scope of the homoglyph/zero-width coverage (specific verified cases,
   not exhaustive Unicode confusables coverage).
 
-### [ ] PHASE 3 — Policy Engine
-- `firewall/policy_engine.py` + `firewall/policy_schema.py` (Pydantic v2).
-- Conflict resolution: DENY > NEEDS_APPROVAL > ALLOW; no match → default
-  `DENY` (INV-08). Policy-set hash pinning (INV-03). ReDoS-safe loader
-  (INV-09). Hypothesis determinism test (INV-13).
-- 20–25 policies, `benign_calls.yaml` fixture (60–100 legitimate calls).
+### [x] PHASE 3 — Policy Engine
+- **Completed**: 2026-08-31
+- `firewall/policy_schema.py`: Pydantic v2 models for six rule types
+  (`parameter_bounds`, `path_scope`, `domain_allowlist`, `sequence`,
+  `rbac`, `rate`), frozen, `extra="forbid"`, unique-rule-id validation,
+  `requires_approval` only valid on `action: allow`.
+- `firewall/policy_engine.py`: `load_policy_set` (yaml.safe_load only,
+  sorted deterministic order, SHA-256 `policy_set_hash` — INV-03);
+  `evaluate_call` — pure (INV-13), DENY > NEEDS_APPROVAL > ALLOW > default
+  conflict resolution (INV-08); `PolicyEngine` adapter satisfying
+  `firewall.interceptor.Evaluator`; INV-09 argument-size/nesting caps;
+  ReDoS defense in two layers — load-time linting (best-effort) plus a
+  runtime timeout via the third-party `regex` package (the actual hard
+  guarantee, verified against a pattern confirmed to hang stdlib `re`
+  indefinitely).
+- `firewall/interceptor.py`: `Decision` extended to a real 3-state
+  `Outcome` (ALLOW/DENY/NEEDS_APPROVAL) — additive and backward-compatible
+  via the `.allowed` property, all 27 Phase 1 tests still pass unmodified.
+- `policies/*.yaml`: 23 rules across 6 files (path_scope, domain_allowlist,
+  parameter_bounds, rbac, sequence, rate_limits) for a 5-mocked-tool demo
+  world (`read_file`, `send_email`, `search_web`, `transfer_funds`,
+  `compose_draft` — ADR 0004's scope).
+- `tests/fixtures/benign_calls.yaml`: 70 legitimate calls (Phase 7's
+  false-positive-rate metric needs this to exist to be computable at all).
+- `tests/test_policy_engine.py`: 135 tests — schema validation, load-time
+  failures, INV-03 (`policies/` outside every allowed root, structural +
+  concrete traversal check), conflict resolution, INV-09 bounds and ReDoS
+  (both the linter AND the runtime timeout tested independently), one
+  isolated test per shipped rule (`test_all_shipped_rules_have_at_least_one_test`
+  guards against a future rule shipping untested), the full benign corpus,
+  and a Hypothesis property test (1000 random calls) for INV-13.
+- `scripts/verify_policies.py` (real implementation, replacing the Phase 0
+  stub) and `docs/POLICY_GUIDE.md` (real guide, replacing the Phase 0
+  stub).
+- ADRs [`0009-policy-conflict-resolution`](docs/knowledge/decisions/0009-policy-conflict-resolution.md)
+  and [`0010-policy-integrity-and-loading`](docs/knowledge/decisions/0010-policy-integrity-and-loading.md).
+- New pinned dependencies: `regex==2026.8.31` (runtime); `hypothesis==6.167.1`,
+  `types-PyYAML`, `types-regex` (dev).
+- **Real bugs found and fixed while building this**: (1) my own ReDoS
+  timeout test initially used an input with no non-matching suffix, so the
+  catastrophic pattern matched instantly instead of backtracking — fixed
+  the test input, not the engine. (2) `policies/parameter_bounds.yaml`'s
+  suspicious-subject pattern used the awkward phrase order "wire transfer
+  urgent" instead of "urgent wire transfer", which a natural-language test
+  call didn't match — fixed the policy's phrasing.
+- **Verified locally**: `ruff check .`, `black --check .`, `mypy firewall/`,
+  `pytest -v` (238 passed, 1 skipped across the whole suite), `bandit -r firewall/`
+  (0 issues), `pip-audit` (0 vulns) — see phase summary in conversation for
+  full pasted output.
+- **Known issues**: see `LIMITATIONS.md` Phase 3 section — chiefly that
+  `sequence`/`rate` rules can't yet be exercised end-to-end through the
+  live interceptor (needs Phase 4's session store), and the ReDoS linter's
+  best-effort (not exhaustive) scope.
 
 ### [ ] PHASE 4 — Session State, Audit Trail, Anomaly Detection
 - `firewall/session.py`, `firewall/logger.py` (SQLite/WAL, hash-chained —
@@ -165,4 +212,5 @@ engine ever sees a raw argument.
   checked by hand once the push completes.
 - Phase 1 verification commands all actually run — see command list above.
 - Phase 2 verification commands all actually run — see command list above.
-- Ready to proceed to Phase 3 (Policy Engine) upon confirmation.
+- Phase 3 verification commands all actually run — see command list above.
+- Ready to proceed to Phase 4 (Session State, Audit Trail, Anomaly Detection) upon confirmation.

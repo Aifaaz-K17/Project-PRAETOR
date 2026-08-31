@@ -12,3 +12,10 @@ pre-commit==4.6.2
 detect-secrets==1.5.0
 bandit==1.9.4
 pip-audit==2.10.1
+
+# Property-based testing (firewall/policy_engine.py determinism — INV-13)
+hypothesis==6.167.1
+
+# mypy stub packages for third-party libraries used by firewall/
+types-PyYAML==6.0.12.20260815
+types-regex==2026.8.31.20260831

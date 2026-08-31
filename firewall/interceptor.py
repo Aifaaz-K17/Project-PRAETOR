@@ -25,6 +25,7 @@ import uuid
 from collections.abc import Awaitable, Callable, Iterable
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from enum import Enum
 from typing import Any, Protocol, TypeVar
 
 from langchain_core.tools import BaseTool
@@ -42,10 +43,19 @@ class CallRecord:
     call_id: str
     tool_name: str
     raw_args: dict[str, Any]
-    # Phase 1: an identity copy of raw_args. Phase 2's canonicalize.py
-    # replaces this with real path/host/email/text canonicalization — the
-    # policy engine (Phase 3) will only ever be handed this field, never
-    # raw_args, per INV-06.
+    # An identity deep-copy of raw_args, taken before the evaluator ever
+    # sees it (INV-07 — see _evaluate_call). This is deliberately NOT
+    # itself run through firewall/canonicalize.py: canonicalizing a value
+    # requires knowing its *type* (is this argument a path? a host? plain
+    # text?), and that mapping is inherently per-rule, not generic — a
+    # "path" parameter might be named "path" for one tool and "file_path"
+    # for another. So type-specific canonicalization happens where the
+    # type is actually known: inside each policy rule's matcher in
+    # firewall/policy_engine.py (a path_scope rule calls canonical_path on
+    # exactly the parameter it names, a domain_allowlist rule calls
+    # canonical_host, and so on) — never here, generically, on the whole
+    # dict. The policy engine still only ever reads canonical_args, never
+    # raw_args, satisfying INV-06's "canonicalize, then decide."
     canonical_args: dict[str, Any]
     session_id: str
     identity: str
@@ -56,26 +66,51 @@ class CallRecord:
     tool_call_id: str | None = None
 
 
+class Outcome(str, Enum):
+    """The three outcomes a policy rule (or a whole evaluation) can
+    produce. NEEDS_APPROVAL sits strictly between ALLOW and DENY in
+    conflict resolution (ADR 0009): it beats ALLOW, but DENY beats it."""
+
+    ALLOW = "ALLOW"
+    DENY = "DENY"
+    NEEDS_APPROVAL = "NEEDS_APPROVAL"
+
+
 @dataclass(frozen=True)
 class Decision:
     """The outcome of evaluating one CallRecord.
 
-    Phase 1 only produces ALLOW/DENY (no NEEDS_APPROVAL yet — that arrives
-    with Phase 5's HITL evaluator, which will resolve approval internally
-    and return a final ALLOW/DENY here, keeping this contract simple).
+    `outcome` is the real, 3-state result (added in Phase 3 to match what
+    CLAUDE.md's own architecture diagram always specified: ALLOW / DENY /
+    NEEDS_APPROVAL). `allowed` is a derived, backward-compatible property
+    — Phase 1's interceptor code was written against a boolean and still
+    only needs to know "did this end up executing or not", which is true
+    for ALLOW and false for both DENY and NEEDS_APPROVAL. Until Phase 5's
+    HITL evaluator exists to actually pause and wait for a human, a
+    NEEDS_APPROVAL decision is treated the same as DENY at the interceptor
+    level — fail-closed in the absence of a real approval mechanism, not a
+    claim that approval is implemented (see LIMITATIONS.md).
     """
 
-    allowed: bool
+    outcome: Outcome
     reason: str
     rule_id: str | None = None
 
+    @property
+    def allowed(self) -> bool:
+        return self.outcome == Outcome.ALLOW
+
     @staticmethod
     def allow(reason: str, rule_id: str | None = None) -> Decision:
-        return Decision(allowed=True, reason=reason, rule_id=rule_id)
+        return Decision(outcome=Outcome.ALLOW, reason=reason, rule_id=rule_id)
 
     @staticmethod
     def deny(reason: str, rule_id: str | None = None) -> Decision:
-        return Decision(allowed=False, reason=reason, rule_id=rule_id)
+        return Decision(outcome=Outcome.DENY, reason=reason, rule_id=rule_id)
+
+    @staticmethod
+    def needs_approval(reason: str, rule_id: str | None = None) -> Decision:
+        return Decision(outcome=Outcome.NEEDS_APPROVAL, reason=reason, rule_id=rule_id)
 
 
 class Evaluator(Protocol):

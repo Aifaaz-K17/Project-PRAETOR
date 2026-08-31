@@ -1,0 +1,321 @@
+# Benign-calls corpus for the Phase 3 policy engine (and Phase 7's false-
+# positive-rate metric, which this fixture exists to make computable at
+# all — CLAUDE.md: "Without this corpus the metric is meaningless").
+#
+# Every entry here is a legitimate, in-policy call against policies/*.yaml
+# and MUST evaluate to Outcome.ALLOW. Deliberately excludes calls that
+# would legitimately land on NEEDS_APPROVAL (e.g. an intern's compose_draft,
+# or emailing the partner domain) — those are correct-but-not-immediate
+# outcomes, not "should always execute", so mixing them in here would make
+# the false-positive-rate metric ambiguous about what counts as a miss.
+#
+# Schema per entry:
+#   id             unique slug
+#   tool           the tool being called
+#   role           the calling principal's role
+#   args           the tool's arguments (already in canonical-ish shape —
+#                  these are legitimate values, not an encoding torture test)
+#   session_history  optional list of tool names treated as already having
+#                    happened earlier in this session (needed for
+#                    send_email, which policies/sequence.yaml gates behind
+#                    a prior compose_draft)
+
+- id: benign-read-file-01
+  tool: read_file
+  role: analyst
+  args: { path: "notes.txt" }
+- id: benign-read-file-02
+  tool: read_file
+  role: analyst
+  args: { path: "reports/q1.txt" }
+- id: benign-read-file-03
+  tool: read_file
+  role: analyst
+  args: { path: "reports/q2.txt" }
+- id: benign-read-file-04
+  tool: read_file
+  role: analyst
+  args: { path: "configs/settings.yaml" }
+- id: benign-read-file-05
+  tool: read_file
+  role: finance
+  args: { path: "ledger/2026-08.csv" }
+- id: benign-read-file-06
+  tool: read_file
+  role: finance
+  args: { path: "ledger/2026-07.csv" }
+- id: benign-read-file-07
+  tool: read_file
+  role: finance
+  args: { path: "invoices/inv-1001.txt" }
+- id: benign-read-file-08
+  tool: read_file
+  role: admin
+  args: { path: "system/status.txt" }
+- id: benign-read-file-09
+  tool: read_file
+  role: admin
+  args: { path: "audit/summary.txt" }
+- id: benign-read-file-10
+  tool: read_file
+  role: analyst
+  args: { path: "notes/meeting-2026-08-20.txt" }
+- id: benign-read-file-11
+  tool: read_file
+  role: analyst
+  args: { path: "subdir/nested/file.txt" }
+- id: benign-read-file-12
+  tool: read_file
+  role: finance
+  args: { path: "budgets/2026.txt" }
+- id: benign-read-file-13
+  tool: read_file
+  role: admin
+  args: { path: "logs/app.log" }
+- id: benign-read-file-14
+  tool: read_file
+  role: analyst
+  args: { path: "drafts/summary.txt" }
+- id: benign-read-file-15
+  tool: read_file
+  role: finance
+  args: { path: "receipts/2026-08-01.txt" }
+
+- id: benign-send-email-01
+  tool: send_email
+  role: analyst
+  session_history: [compose_draft]
+  args: { to: "alice@corp.example.com", subject: "Weekly update", body: "Here is the weekly status." }
+- id: benign-send-email-02
+  tool: send_email
+  role: analyst
+  session_history: [compose_draft]
+  args: { to: "bob@corp.example.com", subject: "Meeting notes", body: "Notes from today's sync." }
+- id: benign-send-email-03
+  tool: send_email
+  role: finance
+  session_history: [compose_draft]
+  args: { to: "finance-team@corp.example.com", subject: "Q3 budget draft", body: "Attached the budget draft." }
+- id: benign-send-email-04
+  tool: send_email
+  role: finance
+  session_history: [compose_draft]
+  args: { to: "controller@corp.example.com", subject: "Invoice approval", body: "Please review the attached invoice." }
+- id: benign-send-email-05
+  tool: send_email
+  role: admin
+  session_history: [compose_draft]
+  args: { to: "it-team@corp.example.com", subject: "Maintenance window", body: "Scheduled maintenance this weekend." }
+- id: benign-send-email-06
+  tool: send_email
+  role: analyst
+  session_history: [compose_draft]
+  args: { to: "carol@corp.example.com", subject: "Project kickoff", body: "Looking forward to starting this." }
+- id: benign-send-email-07
+  tool: send_email
+  role: analyst
+  session_history: [compose_draft]
+  args: { to: "dave@corp.example.com", subject: "Follow up", body: "Following up on yesterday's call." }
+- id: benign-send-email-08
+  tool: send_email
+  role: finance
+  session_history: [compose_draft]
+  args: { to: "auditor@corp.example.com", subject: "Audit documents", body: "Attached the requested documents." }
+- id: benign-send-email-09
+  tool: send_email
+  role: admin
+  session_history: [compose_draft]
+  args: { to: "security@corp.example.com", subject: "Access review", body: "Quarterly access review results." }
+- id: benign-send-email-10
+  tool: send_email
+  role: analyst
+  session_history: [compose_draft]
+  args: { to: "erin@corp.example.com", subject: "Draft feedback", body: "A few comments on the draft." }
+- id: benign-send-email-11
+  tool: send_email
+  role: finance
+  session_history: [compose_draft]
+  args: { to: "payroll@corp.example.com", subject: "Payroll confirmation", body: "Confirming this month's payroll run." }
+- id: benign-send-email-12
+  tool: send_email
+  role: admin
+  session_history: [compose_draft]
+  args: { to: "helpdesk@corp.example.com", subject: "Ticket update", body: "Ticket #4821 has been resolved." }
+- id: benign-send-email-13
+  tool: send_email
+  role: analyst
+  session_history: [compose_draft]
+  args: { to: "frank@corp.example.com", subject: "Reminder", body: "Reminder about tomorrow's deadline." }
+- id: benign-send-email-14
+  tool: send_email
+  role: finance
+  session_history: [compose_draft]
+  args: { to: "vendor-liaison@corp.example.com", subject: "Vendor payment", body: "Vendor payment has been processed." }
+- id: benign-send-email-15
+  tool: send_email
+  role: admin
+  session_history: [compose_draft]
+  args: { to: "ops@corp.example.com", subject: "Deployment notice", body: "New deployment scheduled for Friday." }
+
+- id: benign-search-web-01
+  tool: search_web
+  role: intern
+  args: { query: "python list comprehension", target_host: "docs.python.org" }
+- id: benign-search-web-02
+  tool: search_web
+  role: intern
+  args: { query: "pathlib resolve symlink", target_host: "docs.python.org" }
+- id: benign-search-web-03
+  tool: search_web
+  role: intern
+  args: { query: "praetor project", target_host: "github.com" }
+- id: benign-search-web-04
+  tool: search_web
+  role: intern
+  args: { query: "domain name system", target_host: "wikipedia.org" }
+- id: benign-search-web-05
+  tool: search_web
+  role: analyst
+  args: { query: "unicode normalization forms", target_host: "wikipedia.org" }
+- id: benign-search-web-06
+  tool: search_web
+  role: analyst
+  args: { query: "pydantic validators", target_host: "github.com" }
+- id: benign-search-web-07
+  tool: search_web
+  role: analyst
+  args: { query: "asyncio event loop", target_host: "docs.python.org" }
+- id: benign-search-web-08
+  tool: search_web
+  role: analyst
+  args: { query: "regular expression catastrophic backtracking", target_host: "wikipedia.org" }
+- id: benign-search-web-09
+  tool: search_web
+  role: finance
+  args: { query: "generally accepted accounting principles", target_host: "wikipedia.org" }
+- id: benign-search-web-10
+  tool: search_web
+  role: finance
+  args: { query: "python decimal module", target_host: "docs.python.org" }
+- id: benign-search-web-11
+  tool: search_web
+  role: finance
+  args: { query: "sha256 hashing", target_host: "wikipedia.org" }
+- id: benign-search-web-12
+  tool: search_web
+  role: admin
+  args: { query: "pytest fixtures", target_host: "github.com" }
+- id: benign-search-web-13
+  tool: search_web
+  role: admin
+  args: { query: "yaml specification", target_host: "wikipedia.org" }
+- id: benign-search-web-14
+  tool: search_web
+  role: admin
+  args: { query: "contextvars documentation", target_host: "docs.python.org" }
+- id: benign-search-web-15
+  tool: search_web
+  role: intern
+  args: { query: "git rebase vs merge", target_host: "github.com" }
+- id: benign-search-web-16
+  tool: search_web
+  role: intern
+  args: { query: "http status codes", target_host: "wikipedia.org" }
+- id: benign-search-web-17
+  tool: search_web
+  role: analyst
+  args: { query: "idna punycode encoding", target_host: "wikipedia.org" }
+- id: benign-search-web-18
+  tool: search_web
+  role: analyst
+  args: { query: "email address parsing rfc 5322", target_host: "wikipedia.org" }
+- id: benign-search-web-19
+  tool: search_web
+  role: finance
+  args: { query: "double entry bookkeeping", target_host: "wikipedia.org" }
+- id: benign-search-web-20
+  tool: search_web
+  role: admin
+  args: { query: "openssh configuration", target_host: "docs.python.org" }
+
+- id: benign-transfer-funds-01
+  tool: transfer_funds
+  role: finance
+  args: { amount: 100, note: "Office supplies reimbursement" }
+- id: benign-transfer-funds-02
+  tool: transfer_funds
+  role: finance
+  args: { amount: 250.50, note: "Vendor invoice #2201" }
+- id: benign-transfer-funds-03
+  tool: transfer_funds
+  role: finance
+  args: { amount: 999, note: "Contractor payment" }
+- id: benign-transfer-funds-04
+  tool: transfer_funds
+  role: finance
+  args: { amount: 1, note: "Small adjustment" }
+- id: benign-transfer-funds-05
+  tool: transfer_funds
+  role: finance
+  args: { amount: 500, note: "Monthly software license" }
+- id: benign-transfer-funds-06
+  tool: transfer_funds
+  role: admin
+  args: { amount: 750, note: "Emergency IT purchase" }
+- id: benign-transfer-funds-07
+  tool: transfer_funds
+  role: admin
+  args: { amount: 0, note: "Zero-value test transaction" }
+- id: benign-transfer-funds-08
+  tool: transfer_funds
+  role: finance
+  args: { amount: 42.99, note: "Team lunch reimbursement" }
+- id: benign-transfer-funds-09
+  tool: transfer_funds
+  role: finance
+  args: { amount: 1000, note: "Exactly at the limit" }
+- id: benign-transfer-funds-10
+  tool: transfer_funds
+  role: admin
+  args: { amount: 300, note: "Conference registration fee" }
+
+- id: benign-compose-draft-01
+  tool: compose_draft
+  role: analyst
+  args: { subject: "Weekly update", body: "Draft body text.", attachment_path: "sandbox/notes.txt" }
+- id: benign-compose-draft-02
+  tool: compose_draft
+  role: analyst
+  args: { subject: "Meeting notes", body: "Draft body text.", attachment_path: "sandbox/subdir/file.txt" }
+- id: benign-compose-draft-03
+  tool: compose_draft
+  role: finance
+  args: { subject: "Budget draft", body: "Draft body text.", attachment_path: "sandbox/notes.txt" }
+- id: benign-compose-draft-04
+  tool: compose_draft
+  role: finance
+  args: { subject: "Invoice cover note", body: "Draft body text.", attachment_path: "sandbox/subdir/file.txt" }
+- id: benign-compose-draft-05
+  tool: compose_draft
+  role: admin
+  args: { subject: "Maintenance notice", body: "Draft body text.", attachment_path: "sandbox/notes.txt" }
+- id: benign-compose-draft-06
+  tool: compose_draft
+  role: analyst
+  args: { subject: "Project kickoff", body: "Draft body text.", attachment_path: "sandbox/notes.txt" }
+- id: benign-compose-draft-07
+  tool: compose_draft
+  role: finance
+  args: { subject: "Payroll note", body: "Draft body text.", attachment_path: "sandbox/notes.txt" }
+- id: benign-compose-draft-08
+  tool: compose_draft
+  role: admin
+  args: { subject: "Deployment notice", body: "Draft body text.", attachment_path: "sandbox/subdir/file.txt" }
+- id: benign-compose-draft-09
+  tool: compose_draft
+  role: analyst
+  args: { subject: "Follow up", body: "Draft body text.", attachment_path: "sandbox/notes.txt" }
+- id: benign-compose-draft-10
+  tool: compose_draft
+  role: finance
+  args: { subject: "Audit documents", body: "Draft body text.", attachment_path: "sandbox/subdir/file.txt" }

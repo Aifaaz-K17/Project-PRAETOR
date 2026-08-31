@@ -50,7 +50,10 @@ repos:
     hooks:
       - id: mypy
         files: ^firewall/
-        additional_dependencies: [pydantic==2.13.4]
+        additional_dependencies:
+          - pydantic==2.13.4
+          - types-PyYAML==6.0.12.20260815
+          - types-regex==2026.8.31.20260831
 
   # --- Local, repo-specific hooks (Phase 0 step 0a) ---
   - repo: local

@@ -25,6 +25,8 @@ Welcome to the living architecture and knowledge vault for the **Deterministic A
 - [[0006-agent-framework-choice]] — LangChain primary target vs AutoGen extension.
 - [[0007-interceptor-enforcement-point]] — Wrap-at-registration as the enforcement point; call-normalization contract; fail-closed/TOCTOU-safe chokepoint.
 - [[0008-canonicalization-before-matching]] — Real filesystem/IDNA resolution over string matching; single percent-decode; label-boundary domain matching; strip vs. reject policy.
+- [[0009-policy-conflict-resolution]] — DENY > NEEDS_APPROVAL > ALLOW > default; why gate-shaped rules must be action: deny.
+- [[0010-policy-integrity-and-loading]] — Load-once SHA-256 hashing, frozen structures, ReDoS static linting + runtime timeout (verified against a real hanging pattern).
 
 ---
 

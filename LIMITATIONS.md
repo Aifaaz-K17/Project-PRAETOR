@@ -141,3 +141,51 @@
   four ranges) covers the well-known formatting-character families; it is
   not a claim of covering every Unicode code point with zero visible
   width, which is a larger and still-growing set.
+
+## Phase 3 — Policy Engine
+
+- **`sequence` and `rate` rules need real session call history, which
+  doesn't exist yet.** `PolicyEngine.evaluate()` — the adapter the live
+  interceptor actually calls — always evaluates against an *empty*
+  session history, because Phase 4's `firewall/session.py` (the real
+  session store) hasn't been built. Concretely, this means
+  `policies/sequence.yaml`'s `send_email` gate denies *every* call to
+  `send_email` through the live interceptor right now, even one correctly
+  preceded by `compose_draft` in the same real session — because nothing
+  is currently tracking that a prior call happened at all. This is
+  fail-closed-correct (an unknown history is treated as "nothing has
+  happened yet", never as "assume it's fine"), but it does mean these two
+  rule *types* are fully implemented and tested (against
+  directly-constructed session history in `tests/test_policy_engine.py`)
+  without yet being exercisable end-to-end through a real multi-call
+  session. `demo_agent/interception_demo.py` (Phase 1) does not use the
+  real policy engine yet, so this gap isn't visible there either — it will
+  become visible, and need fixing, when Phase 6 builds a real multi-step
+  demo scenario.
+- `canonical_email`'s bare-hostname-only limitation (noted in Phase 2)
+  means a `domain_allowlist` rule's email fallback also can't match an
+  IP-literal-in-brackets email domain — same narrow, honest gap, now
+  visible one layer up.
+- The ReDoS static linter (`_lint_pattern_for_redos`) is two fixed regexes
+  matching the textbook nested-quantifier and overlapping-alternation
+  shapes named in CLAUDE.md's Phase 3 spec — not a general ReDoS
+  static-analysis tool. A pattern using a different catastrophic shape
+  could load successfully and rely entirely on the runtime timeout (which
+  is the actual hard guarantee — see ADR 0010). Both layers are tested,
+  but only the second is a completeness claim.
+- `MAX_RULE_COUNT` (500), `MAX_ARG_COUNT` (50), `MAX_STRING_LENGTH`
+  (65536), and `MAX_NESTING_DEPTH` (10) are round numbers chosen for
+  headroom over this project's actual scale, not derived from load
+  testing. TODO(verify) if Phase 7's evaluation work needs to
+  characterize real limits.
+- `benign_calls.yaml`'s 70 entries were authored by the same person who
+  wrote the policies they're checked against — the same
+  authored-by-the-defenders threat-to-validity that applies to the Phase 2
+  bypass corpus applies here too, and will be named explicitly in Phase
+  7's evaluation methodology section.
+- `test_all_shipped_rules_have_at_least_one_test` is a structural
+  string-search guard (checks each rule `id` appears somewhere in
+  `tests/test_policy_engine.py`'s source), not a semantic check that the
+  test actually exercises the rule meaningfully — a rule id that merely
+  appears in a comment would pass it. Cheap insurance against a forgotten
+  test, not a substitute for reviewing new tests by hand.
