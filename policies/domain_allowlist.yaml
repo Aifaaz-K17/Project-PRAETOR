@@ -15,7 +15,16 @@ rules:
     action: allow
     parameter: to
     allowed_domains: ["corp.example.com"]
-    description: send_email may address recipients at the company's own domain freely.
+    roles: ["analyst", "finance", "admin"]
+    description: >
+      send_email may address recipients at the company's own domain
+      freely, for analyst-and-above roles — matching
+      rbac-send-email-analysts. Without this roles list, an intern (no
+      plain-ALLOW RBAC grant for send_email) could still send to this
+      domain once the sequence gate was satisfied: this rule's own ALLOW
+      vote was independently sufficient regardless of role, silently
+      bypassing the RBAC restriction rather than composing with it (a
+      real bug found via testing — see ADR 0012 and LIMITATIONS.md).
 
   - type: domain_allowlist
     id: domain-send-email-partner-needs-approval

@@ -16,7 +16,15 @@ rules:
     action: allow
     parameter: path
     allowed_roots: ["sandbox"]
-    description: read_file may only read inside the sandbox/ fixture root.
+    roles: ["analyst", "finance", "admin"]
+    description: >
+      read_file may only read inside the sandbox/ fixture root, and only
+      for analyst-and-above roles — matching rbac-read-file-analysts.
+      Without this roles list, an intern (no RBAC grant for read_file)
+      could still read any in-scope file: this rule's own ALLOW vote was
+      independently sufficient regardless of role, silently bypassing the
+      RBAC restriction rather than composing with it (a real bug found
+      via testing — see ADR 0012 and LIMITATIONS.md).
 
   - type: path_scope
     id: path-compose-draft-attachment-sandbox
