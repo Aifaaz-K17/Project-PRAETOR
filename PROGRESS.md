@@ -75,7 +75,7 @@ engine ever sees a raw argument.
   connections).
 
 ### [x] PHASE 2 — Canonicalization Layer
-- **Completed**: 2026-08-31
+- **Completed**: 2026-08-31 · **Commit**: `9938fcb`
 - `firewall/canonicalize.py`: `Canonical[T]` wrapper; `canonical_path`
   (real `Path.resolve()` + `Path.is_relative_to` containment, never string
   manipulation), `canonical_host` (IDNA/punycode, NFKC, userinfo/port

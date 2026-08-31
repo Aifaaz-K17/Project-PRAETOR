@@ -29,8 +29,8 @@
 **Revert:** `git revert d30f7e0`
 
 ## 2026-08-31 — Phase 2: Canonicalization Layer
-**Commit:** (pending — see PROGRESS.md)
+**Commit:** `9938fcb`
 **Changed:** `firewall/canonicalize.py` (`Canonical[T]`, `canonical_path`, `canonical_host` + `matches_domain_allowlist`, `canonical_email`/`canonical_email_list`, `canonical_text`); `tests/fixtures/bypass_corpus.yaml` (44 entries); `tests/test_canonicalize.py` (corpus runner + ~25 dynamic tests for NUL/control/CRLF/zero-width cases and runtime-only path values); ADR `0008-canonicalization-before-matching`; new pinned dependency `idna==3.18`. Found and fixed two real bugs: `_single_percent_decode` could crash (uncaught `UnicodeDecodeError`) on a malformed percent-encoded byte instead of denying; `canonical_email_list` used a bare `assert` that bandit correctly flagged as strippable under `python -O`.
 **Why:** Phase 2 deliverable per the detailed build prompt — INV-06 requires every value canonicalized before the policy engine (Phase 3) ever compares it, since matching on raw input is "the #1 real-world way allowlists fail" (CLAUDE.md §2).
 **Files:** `firewall/canonicalize.py`, `tests/fixtures/bypass_corpus.yaml`, `tests/test_canonicalize.py`, `requirements.txt`, `docs/knowledge/decisions/0008-canonicalization-before-matching.md`, `docs/knowledge/concepts/canonicalization.md`, `docs/knowledge/concepts/policy-engine.md`, `docs/knowledge/concepts/interception-layer.md`, `docs/knowledge/index.md`, `LIMITATIONS.md`, `PROGRESS.md`
-**Revert:** `git revert <hash>` (once committed)
+**Revert:** `git revert 9938fcb`
