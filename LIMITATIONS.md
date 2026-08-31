@@ -24,13 +24,20 @@
   `AI_Agent_Firewall_Project_Guide.md`, `implementation_plan.md`,
   `AI_Agent_Firewall_Master_Build_Prompt.md` v1) — these were never added to
   this repo and are not fabricated here.
-- **No GitHub remote is configured for this repo yet.** `.github/workflows/ci.yml`
-  has therefore never actually executed — everything in it (action SHAs,
-  the pinned Python 3.14.6 setup, the full ruff/black/mypy/pytest/pip-audit
-  /bandit/gitleaks gate) has only been verified by running each tool
-  locally against the same commands the workflow uses, not by watching a
-  real GitHub Actions run go green. First real CI run must be checked by
-  hand before this claim can be upgraded from "should work" to "works".
+- **A GitHub remote (`Aifaaz-K17/Project-PRAETOR`) was connected on
+  2026-08-31**, after being merged with the pre-existing GitHub-created
+  history (LICENSE + README) via `git merge --allow-unrelated-histories`
+  rather than a force-push. As of this note, `.github/workflows/ci.yml`
+  still has not actually executed on GitHub — the initial `git push` from
+  this environment stalled on an interactive Git Credential Manager
+  browser prompt that a non-interactive shell can't complete, so the push
+  was handed to the user to run themselves. Everything in the workflow
+  (action SHAs, the pinned Python 3.14.6 setup, the full
+  ruff/black/mypy/pytest/pip-audit/bandit/gitleaks gate) has only been
+  verified by running each tool locally against the same commands the
+  workflow uses, not by watching a real GitHub Actions run go green. First
+  real CI run must be checked by hand before this claim can be upgraded
+  from "should work" to "works".
 - CI pins Python **3.14.6** (matching the local dev venv, so the exact
   versions frozen in `requirements.lock` are guaranteed installable) rather
   than the 3.11 baseline named in `CLAUDE.md`'s stack line ("Python
@@ -49,5 +56,50 @@
   git's hook invocation environment varies by platform/git version. It's
   documented as defense-in-depth in the module's own docstring, not as an
   enforcement of INV-03 itself (that lives in the interceptor).
-- The README's CI badge URL (`github.com/user/ai-agent-firewall`) is a
-  placeholder — there is no real GitHub remote yet to point it at.
+- ~~The README's CI badge URL (`github.com/user/ai-agent-firewall`) is a
+  placeholder~~ — resolved 2026-08-31: now points at the real repo
+  (`Aifaaz-K17/Project-PRAETOR`), though the badge itself can't turn green
+  until CI has actually run once (see above).
+
+## Phase 1 — Interception Layer
+
+- `Evaluator` (the seam Phase 3's policy engine implements) is currently
+  only exercised by test doubles in `tests/_evaluators.py` and the
+  illustrative `_DemoEvaluator` in `demo_agent/interception_demo.py` —
+  neither is a real policy engine, and `_DemoEvaluator`'s "deny anything
+  containing the word 'delete'" rule is not a claim about Praetor's actual
+  policy logic.
+- **Residual bypass (by design, documented, tested):** a direct reference
+  to the *original* tool/function object — the one passed into
+  `GuardedToolRegistry.register()` or `firewall_guard(...)`, kept before or
+  instead of using the wrapped object — executes completely unmediated.
+  See `docs/THREAT_MODEL.md` R-1, ADR
+  [`0007-interceptor-enforcement-point`](docs/knowledge/decisions/0007-interceptor-enforcement-point.md),
+  and `test_INV_02_direct_reference_bypasses_registry` /
+  `test_firewall_guard_decorator_direct_reference_bypass`. Production
+  mitigation (documented, not built): ship tools behind a module boundary
+  that only ever exports the guarded object.
+- `_SequenceCounters` (per-session call numbering) is a Phase 1 placeholder
+  — thread-safe, but with no TTL or eviction. Phase 4's `firewall/session.py`
+  replaces it with the full session state store.
+- `CallRecord.canonical_args` is currently just an identity deep-copy of
+  `raw_args` — real canonicalization (path/host/email/text) doesn't exist
+  until Phase 2. Nothing in Phase 1 should be read as a canonicalization
+  claim.
+- The interceptor's "parallel tool calls" coverage is tested via
+  `asyncio.gather()` of coroutines within one bound principal (realistic
+  for how a LangChain agent would fan out multiple tool calls) and via
+  `.batch()`/`.abatch()`. It does **not** test raw OS-thread parallelism
+  with a principal bound in one thread and consumed from another —
+  `contextvars` do not propagate across manually-started `threading.Thread`
+  objects (only across `asyncio` tasks and within the same thread), so a
+  caller that wants multi-threaded guarded calls must bind the principal
+  inside each thread's own entry point. `_SequenceCounters` thread-safety
+  itself *is* tested directly under real concurrent threads.
+- Found and fixed during this phase: the INV-14 network-blocking fixture
+  originally patched `socket.socket` itself, which broke every async test
+  on Windows (`asyncio.ProactorEventLoop` needs a real loopback socket pair
+  internally for its self-pipe). Fixed by blocking only
+  `connect`/`connect_ex` to non-loopback addresses instead — a more
+  accurate reading of INV-14 ("no live targets") in any case. See
+  `conftest.py`'s docstring for the full explanation.

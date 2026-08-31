@@ -1,6 +1,6 @@
 # Praetor — Project Progress Tracking
 
-## Current Status: Phase 0 Complete (2026-08-30)
+## Current Status: Phase 1 Complete (2026-08-31)
 
 Phase plan below supersedes the earlier 0–8 outline: Phase 2 is now a
 dedicated Canonicalization layer, built and tested before the policy
@@ -11,7 +11,7 @@ engine ever sees a raw argument.
 ## Phase Overview & Checklist
 
 ### [x] PHASE 0 — Scaffolding, Secret Protection, Threat Model
-- **Completed**: 2026-08-30
+- **Completed**: 2026-08-30 · **Commit**: `4d5c5bf`
 - Repo layout matches `CLAUDE.md` §1 (`firewall/`, `policies/`,
   `demo_agent/`, `dashboard/`, `tests/`, `docs/`, `scripts/`, `sandbox/`).
 - Secrets-first tooling: `.gitignore`, `.gitattributes`,
@@ -46,11 +46,33 @@ engine ever sees a raw argument.
   manual local install; several planning-doc source files referenced by
   the team were never added to the repo.
 
-### [ ] PHASE 1 — Interception Layer (Total Mediation)
-- `@firewall_guard` decorator + `GuardedToolRegistry`.
-- Cover sync/async/`.invoke()`/`.ainvoke()`/`.run()`/batched/retried paths.
-- Principal binding from `contextvars` (INV-05), freeze-after-evaluation
-  (INV-07), fail-closed on exception (INV-01), bypass-audit test (INV-02).
+### [x] PHASE 1 — Interception Layer (Total Mediation)
+- **Completed**: 2026-08-31
+- `firewall/context.py`: `Principal` + `contextvars`-based binding
+  (`bind_principal`/`get_current_principal`), fail-closed
+  `PrincipalNotBoundError` when unbound (INV-05).
+- `firewall/interceptor.py`: `CallRecord`, `Decision`, `Evaluator`
+  (`Protocol` — the seam Phase 3 implements), `ToolCallDenied`,
+  `GuardedTool`, `GuardedToolRegistry`, `firewall_guard` decorator.
+  `_evaluate_call` is the single chokepoint every execution path
+  (`invoke`/`ainvoke`/`run`/`arun`/`batch`/`abatch`, retries) funnels
+  through — fail-closed on any exception (INV-01), TOCTOU-safe via two
+  independent pre-evaluation deep copies (INV-07).
+- 35 passing tests across `tests/test_context.py` and
+  `tests/test_interceptor.py`, including the INV-02 bypass-audit headline
+  test and two *honest negative* tests documenting the one real residual
+  bypass (a direct reference to the undecorated original).
+- `demo_agent/interception_demo.py`: console demo of allowed/denied calls.
+- ADR [`0007-interceptor-enforcement-point`](docs/knowledge/decisions/0007-interceptor-enforcement-point.md).
+- **Verified locally**: `ruff check .`, `black --check .`, `mypy firewall/`,
+  `pytest -v` (35/35 passed), `pip-audit` (0 vulns), `bandit -r firewall/`
+  (0 issues) — see phase summary in conversation for full pasted output.
+- **Known issues**: see `LIMITATIONS.md` Phase 1 section — the documented
+  R-1 residual bypass, `Evaluator` has no real implementation yet (Phase
+  3), `_SequenceCounters` is a Phase-4-pending placeholder, and a real bug
+  found and fixed in the INV-14 test fixture (it broke async tests on
+  Windows by blocking `socket.socket` itself instead of just outbound
+  connections).
 
 ### [ ] PHASE 2 — Canonicalization Layer
 - `firewall/canonicalize.py`: `canonical_path`, `canonical_host`,
@@ -97,6 +119,10 @@ engine ever sees a raw argument.
 ## Known Issues / Resume Notes
 - Phase 0 verification commands all re-run and passed for real this
   session (not assumed from the prior Phase 0 pass) — see command list
-  above and `LIMITATIONS.md` for exactly what's still unverified (mainly:
-  no live GitHub Actions run yet, since there's no remote configured).
-- Ready to proceed to Phase 1 upon confirmation.
+  above and `LIMITATIONS.md` for exactly what's still unverified.
+- A GitHub remote (`Aifaaz-K17/Project-PRAETOR`) is now connected on
+  `main`, merged with its pre-existing initial commit rather than
+  force-pushed over. First real GitHub Actions run still needs to be
+  checked by hand once the push completes.
+- Phase 1 verification commands all actually run — see command list above.
+- Ready to proceed to Phase 2 (Canonicalization Layer) upon confirmation.

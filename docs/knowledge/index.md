@@ -22,6 +22,7 @@ Welcome to the living architecture and knowledge vault for the **Deterministic A
 - [[0004-tool-scale-scope]] — Scope decision for 5 mocked tools in demo agent.
 - [[0005-hitl-approval-mechanism]] — Terminal CLI prompt vs Slack/webhook approval mechanism.
 - [[0006-agent-framework-choice]] — LangChain primary target vs AutoGen extension.
+- [[0007-interceptor-enforcement-point]] — Wrap-at-registration as the enforcement point; call-normalization contract; fail-closed/TOCTOU-safe chokepoint.
 
 ---
 
