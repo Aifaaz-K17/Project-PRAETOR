@@ -45,3 +45,15 @@ htmlcov/
 .idea/
 .DS_Store
 Thumbs.db
+desktop.ini
+
+# Sandbox runtime output (fixtures are tracked, runtime output is not)
+sandbox/runtime/*
+!sandbox/runtime/.gitkeep
+
+# Literature PDFs (copyrighted papers — keep out of git, notes stay tracked)
+docs/literature/pdfs/*
+!docs/literature/pdfs/.gitkeep
+
+# Secrets baseline audit artifacts
+.secrets.baseline.bak

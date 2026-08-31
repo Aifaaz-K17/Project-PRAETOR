@@ -1,27 +1,70 @@
-name: CI Test Suite
+name: CI
+
+# Runs on every push and PR (CLAUDE.md §4, Phase 0 step 0c). Gate order:
+# ruff -> black --check -> mypy firewall/ -> pytest (offline, INV-14) ->
+# pip-audit -> bandit -r firewall/ -> gitleaks. Any failure blocks the PR.
 
 on:
   push:
-    branches: [ main, master ]
+    branches: [main, master]
   pull_request:
-    branches: [ main, master ]
+    branches: [main, master]
+
+# Least-privilege by default (INV-02/INV-15 spirit: nothing in this repo
+# should be able to do more than it needs). Individual jobs/steps do not
+# request anything beyond this.
+permissions:
+  contents: read
 
 jobs:
-  test:
+  checks:
+    name: Lint, type-check, test, audit
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-
-      - name: Set up Python 3.11
-        uses: actions/setup-python@v5
+      # Actions pinned to a commit SHA, not a floating tag (CLAUDE.md §3:
+      # "no unpinned dependencies"). The version tag is kept in a trailing
+      # comment purely for human readability; it is not what gets executed.
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          python-version: '3.11'
+          fetch-depth: 0 # gitleaks needs full history to scan past commits
+
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.14.6" # matches PROGRESS.md environment stamp
 
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements.txt
+          pip install -r requirements.txt -r requirements-dev.txt
 
-      - name: Run pytest test suite
-        run: |
-          pytest --verbose
+      - name: ruff (lint)
+        run: ruff check .
+
+      - name: black (format check)
+        run: black --check .
+
+      - name: mypy (firewall/ only, per CLAUDE.md §3)
+        run: mypy firewall/
+
+      - name: pytest (offline — INV-14)
+        run: pytest -v
+
+      - name: pip-audit (dependency vulnerabilities)
+        run: pip-audit -r requirements.txt
+
+      - name: bandit (SAST on firewall/)
+        run: bandit -r firewall/
+
+      # No secrets are read on the pull_request trigger above — GITHUB_TOKEN
+      # here is GitHub's own auto-issued, run-scoped token (not a repo
+      # secret we created), and its permissions are already capped by the
+      # `permissions: contents: read` block at the top of this file.
+      # GITLEAKS_LICENSE is intentionally not set: gitleaks-action only
+      # requires it for GitHub Organization accounts, not personal/user
+      # accounts (see gitleaks/gitleaks-action README).
+      - name: gitleaks (secret scanning)
+        uses: gitleaks/gitleaks-action@e0c47f4f8be36e29cdc102c57e68cb5cbf0e8d1e # v3.0.0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

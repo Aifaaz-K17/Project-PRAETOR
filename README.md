@@ -1,8 +1,11 @@
 # Deterministic Action Firewall for AI Agents
 
 ![Build Status](https://github.com/user/ai-agent-firewall/actions/workflows/ci.yml/badge.svg)
+<!-- TODO(verify): badge URL is a placeholder — this repo has no GitHub
+     remote configured yet. Update `user/ai-agent-firewall` above to the
+     real owner/repo once one exists (see LIMITATIONS.md). -->
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Python Version](https://img.shields.io/badge/python-3.11%2B-blue.svg)](https://www.python.org/)
+[![Python Version](https://img.shields.io/badge/python-3.14-blue.svg)](https://www.python.org/)
 
 A defensive security research tool providing runtime, action-layer policy enforcement for LLM-based agents (built on LangChain). Intercepts function/tool calls before execution to enforce parameter bounds, state invariants, RBAC scoping, and anomaly detection.
 
@@ -58,14 +61,37 @@ graph TD
    source venv/bin/activate
    ```
 
-3. **Install dependencies**:
+3. **Install dependencies** (runtime + dev tooling):
    ```bash
-   pip install -r requirements.txt
+   pip install -r requirements.txt -r requirements-dev.txt
    ```
 
-4. **Run test suite**:
+4. **Install the gitleaks binary** (needed once, for the local pre-commit
+   secret-scan hook — CI runs its own copy separately and needs nothing
+   installed locally):
+   - Download the `v8.30.1` release for your OS from
+     https://github.com/gitleaks/gitleaks/releases/tag/v8.30.1
+   - Extract `gitleaks` (or `gitleaks.exe` on Windows) and put it on your `PATH`.
+   - Verify: `gitleaks version` should print `8.30.1`.
+
+5. **Install the git hooks** (run once per clone):
    ```bash
-   pytest
+   pre-commit install
+   ```
+
+6. **Run test suite**:
+   ```bash
+   pytest -v
+   ```
+
+7. **Run the full local CI gate** (what `.github/workflows/ci.yml` runs):
+   ```bash
+   ruff check .
+   black --check .
+   mypy firewall/
+   pytest -v
+   pip-audit -r requirements.txt
+   bandit -r firewall/
    ```
 
 ---

@@ -1,18 +1,24 @@
+# Exact-pinned per CLAUDE.md §3 ("Unpinned dependencies... upgrading a
+# pinned dependency without saying why" is forbidden). These are the direct
+# dependencies; requirements.lock is the full resolved closure (pip freeze)
+# for exact reproducibility. Frozen against the Python version recorded in
+# PROGRESS.md.
+
 # Core Agent Framework
-langchain>=0.1.0
-langchain-community>=0.0.20
-langchain-core>=0.1.20
+langchain==1.3.15
+langchain-community==0.4.2
+langchain-core==1.5.4
 
 # Data Validation & Serialization
-pydantic>=2.0.0
-pyyaml>=6.0.1
+pydantic==2.13.4
+pyyaml==6.0.3
 
 # Web API & Dashboard
-fastapi>=0.109.0
-uvicorn>=0.27.0
-streamlit>=1.31.0
+fastapi==0.141.1
+uvicorn==0.52.2
+streamlit==1.61.1
 
 # Testing & Utilities
-pytest>=8.0.0
-python-dotenv>=1.0.0
-matplotlib>=3.8.0
+pytest==9.1.1
+python-dotenv==1.2.2
+matplotlib==3.11.1

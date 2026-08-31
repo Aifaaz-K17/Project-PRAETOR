@@ -1,0 +1,79 @@
+# Secrets protection must exist before the code it protects (CLAUDE.md §4,
+# Phase 0 step 0a). Team setup, once per clone:
+#
+#   pip install -r requirements-dev.txt
+#   pre-commit install
+#
+# All `rev:` values below are pinned to an exact release tag (verified
+# against the upstream repo's tags at write time), matching the "no
+# unpinned dependencies" rule in CLAUDE.md §3.
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
+    hooks:
+      - id: check-added-large-files
+      - id: end-of-file-fixer
+
+  # Uses the *-system variant (not the default `gitleaks` hook id), which
+  # needs the gitleaks binary on PATH instead of a Go toolchain to build it
+  # from source — see README "Setup" for the one-time install command.
+  - repo: https://github.com/gitleaks/gitleaks
+    rev: v8.30.1
+    hooks:
+      - id: gitleaks-system
+        # Upstream's hook definition doesn't set this, so pre-commit's
+        # default (pass individual staged filenames as argv) applies —
+        # but `gitleaks git --staged` takes at most one positional arg (a
+        # repo path) and rescans the staged diff itself. Passing filenames
+        # crashes it with "accepts at most 1 arg(s)" (verified locally).
+        pass_filenames: false
+
+  - repo: https://github.com/Yelp/detect-secrets
+    rev: v1.5.0
+    hooks:
+      - id: detect-secrets
+        args: ["--baseline", ".secrets.baseline"]
+
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.16.5
+    hooks:
+      - id: ruff
+        args: [--fix]
+
+  - repo: https://github.com/psf/black
+    rev: 26.5.1
+    hooks:
+      - id: black
+
+  - repo: https://github.com/pre-commit/mirrors-mypy
+    rev: v2.3.1
+    hooks:
+      - id: mypy
+        files: ^firewall/
+        additional_dependencies: [pydantic==2.13.4]
+
+  # --- Local, repo-specific hooks (Phase 0 step 0a) ---
+  - repo: local
+    hooks:
+      - id: block-db-files
+        name: Block committing database files
+        description: >
+          *.db / *.sqlite / *.sqlite3 must never enter the repo
+          (CLAUDE.md §3 forbidden actions).
+        language: fail
+        entry: >
+          Refusing to commit a database file. *.db/*.sqlite/*.sqlite3 are
+          forbidden in this repo (CLAUDE.md forbidden actions) — audit DBs
+          are runtime output, not source.
+        files: '\.(db|sqlite|sqlite3)$'
+
+      - id: block-noninteractive-policy-edits
+        name: Block non-interactive edits to policies/
+        description: >
+          policies/ is treated as code, never agent-writable (INV-03).
+          Refuses the commit if it looks like it was run from a script or
+          CI rather than a human at a terminal.
+        language: system
+        entry: python scripts/hooks/block_policy_commits.py
+        files: '^policies/'
+        pass_filenames: false

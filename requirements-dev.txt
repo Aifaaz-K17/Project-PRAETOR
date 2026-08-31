@@ -1,0 +1,14 @@
+# Dev-only tooling: linting, formatting, type-checking, secrets scanning,
+# dependency/SAST auditing, and pre-commit itself.
+# Not needed to run the library — only to work on it (CLAUDE.md "Definition
+# of done" §3, and the pre-commit hooks in .pre-commit-config.yaml).
+#
+# Install with: pip install -r requirements.txt -r requirements-dev.txt
+
+ruff==0.16.5
+black==26.5.1
+mypy==2.3.1
+pre-commit==4.6.2
+detect-secrets==1.5.0
+bandit==1.9.4
+pip-audit==2.10.1
