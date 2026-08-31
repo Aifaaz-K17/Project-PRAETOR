@@ -27,17 +27,44 @@
 - **A GitHub remote (`Aifaaz-K17/Project-PRAETOR`) was connected on
   2026-08-31**, after being merged with the pre-existing GitHub-created
   history (LICENSE + README) via `git merge --allow-unrelated-histories`
-  rather than a force-push. As of this note, `.github/workflows/ci.yml`
-  still has not actually executed on GitHub — the initial `git push` from
-  this environment stalled on an interactive Git Credential Manager
-  browser prompt that a non-interactive shell can't complete, so the push
-  was handed to the user to run themselves. Everything in the workflow
-  (action SHAs, the pinned Python 3.14.6 setup, the full
-  ruff/black/mypy/pytest/pip-audit/bandit/gitleaks gate) has only been
-  verified by running each tool locally against the same commands the
-  workflow uses, not by watching a real GitHub Actions run go green. First
-  real CI run must be checked by hand before this claim can be upgraded
-  from "should work" to "works".
+  rather than a force-push. The `git push` from this environment
+  repeatedly stalled on an interactive Git Credential Manager browser
+  prompt that a non-interactive shell can't complete, so every push in
+  this project was actually run by the user themselves, from their own
+  terminal.
+- **CI has now actually run on GitHub, and it is currently RED, not
+  green** — the "should work" claim in the previous phase summaries did
+  not survive contact with a real run. `.github/workflows/ci.yml`'s job
+  succeeded through ruff, black, and mypy, then **failed at the `pytest`
+  step** (exit code 1) on `ubuntu-latest`, for the `main` branch at
+  commit `d876f676967d2b190860b35bc5b2e23288b4f3d0`. `pip-audit`, `bandit`,
+  and `gitleaks` were skipped as a consequence (the workflow has no
+  `if: always()` on later steps). The exact failing test name(s) could
+  not be retrieved from this session — GitHub's job-logs API returned
+  `403 Must have admin rights to Repository` for this account/token
+  combination, and the check-run annotations API gave only
+  `"Process completed with exit code 1"` with no per-test detail. TODO:
+  a human needs to open the Actions tab
+  (https://github.com/Aifaaz-K17/Project-PRAETOR/actions) and paste the
+  failing test name(s) back, or grant a way to fetch the log, before this
+  can be diagnosed and fixed.
+- **Leading hypothesis, not yet confirmed:** `tests/test_canonicalize.py::
+  test_INV_06_path_symlink_to_parent_denied` has only ever *skipped* on
+  the Windows dev machine this project was built on (no Developer Mode /
+  admin rights to create a symlink there) — meaning it has never actually
+  executed anywhere until this first real Linux CI run, where symlink
+  creation needs no special privilege. If that's the failure, it's
+  exactly the risk this same limitations file already flagged in the
+  Phase 2 section below ("the strongest local proof of symlink-traversal
+  denial currently only exists once CI has actually run") — now proven
+  true, one way or the other, rather than assumed. Not confirmed until
+  the actual failing test name is seen.
+- Python **3.11** compatibility (see the next bullet) is a second
+  candidate — the CI job installs `requirements.txt`'s exact-pinned
+  versions, which were frozen against 3.14.6 and have not been separately
+  confirmed installable/compatible under 3.11. CI currently pins 3.14.6
+  (not 3.11), so this specific run should not be affected by that gap —
+  named here only because it's the other real unknown in this setup.
 - CI pins Python **3.14.6** (matching the local dev venv, so the exact
   versions frozen in `requirements.lock` are guaranteed installable) rather
   than the 3.11 baseline named in `CLAUDE.md`'s stack line ("Python
