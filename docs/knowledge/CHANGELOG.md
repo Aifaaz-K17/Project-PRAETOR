@@ -36,7 +36,7 @@
 **Revert:** `git revert 9938fcb`
 
 ## 2026-08-31 — Fix: block-noninteractive-policy-edits always blocked, even interactively
-**Commit:** (pending)
+**Commit:** `f3c0b32`
 **Changed:** `scripts/hooks/block_policy_commits.py` — dropped the `sys.stdin.isatty()` check entirely, keeping only the `CI` env var check; renamed the pre-commit hook id from `block-noninteractive-policy-edits` to `block-ci-policy-edits` in `.pre-commit-config.yaml`.
 **Why:** A user ran `git commit` on `policies/*.yaml` from a real interactive terminal and the hook still blocked it. Reading `pre_commit/util.py`'s source confirmed pre-commit unconditionally redirects `stdin` to `os.devnull` for every `language: system` hook — `sys.stdin.isatty()` is always `False` inside a pre-commit hook regardless of true interactivity, so the check had never worked and was blocking every single policy commit, forever.
 **Files:** `scripts/hooks/block_policy_commits.py`, `.pre-commit-config.yaml`, `LIMITATIONS.md`
