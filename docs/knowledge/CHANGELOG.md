@@ -35,6 +35,13 @@
 **Files:** `firewall/canonicalize.py`, `tests/fixtures/bypass_corpus.yaml`, `tests/test_canonicalize.py`, `requirements.txt`, `docs/knowledge/decisions/0008-canonicalization-before-matching.md`, `docs/knowledge/concepts/canonicalization.md`, `docs/knowledge/concepts/policy-engine.md`, `docs/knowledge/concepts/interception-layer.md`, `docs/knowledge/index.md`, `LIMITATIONS.md`, `PROGRESS.md`
 **Revert:** `git revert 9938fcb`
 
+## 2026-08-31 — Fix: block-noninteractive-policy-edits always blocked, even interactively
+**Commit:** (pending)
+**Changed:** `scripts/hooks/block_policy_commits.py` — dropped the `sys.stdin.isatty()` check entirely, keeping only the `CI` env var check; renamed the pre-commit hook id from `block-noninteractive-policy-edits` to `block-ci-policy-edits` in `.pre-commit-config.yaml`.
+**Why:** A user ran `git commit` on `policies/*.yaml` from a real interactive terminal and the hook still blocked it. Reading `pre_commit/util.py`'s source confirmed pre-commit unconditionally redirects `stdin` to `os.devnull` for every `language: system` hook — `sys.stdin.isatty()` is always `False` inside a pre-commit hook regardless of true interactivity, so the check had never worked and was blocking every single policy commit, forever.
+**Files:** `scripts/hooks/block_policy_commits.py`, `.pre-commit-config.yaml`, `LIMITATIONS.md`
+**Revert:** `git revert <hash>` (once committed)
+
 ## 2026-08-31 — Phase 3: Policy Engine
 **Commit:** `7bd719b` (code/tests/docs) + policies/*.yaml committed separately by a human (see note in that commit's message and LIMITATIONS.md)
 **Changed:** `firewall/policy_schema.py` (Pydantic v2, six rule types); `firewall/policy_engine.py` (`load_policy_set` with SHA-256 hashing, pure `evaluate_call`, `PolicyEngine` adapter, INV-09 bounds + two-layer ReDoS defense); `firewall/interceptor.py` (`Decision` extended to a real 3-state `Outcome` — additive, all Phase 1 tests unchanged); `policies/*.yaml` (23 rules, 6 files); `tests/fixtures/benign_calls.yaml` (70 entries); `tests/test_policy_engine.py` (135 tests); `scripts/verify_policies.py` (real implementation); `docs/POLICY_GUIDE.md` (real guide); ADRs `0009-policy-conflict-resolution`, `0010-policy-integrity-and-loading`. New deps: `regex`, `hypothesis`, `types-PyYAML`, `types-regex`.

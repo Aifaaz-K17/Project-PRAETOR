@@ -71,12 +71,23 @@
   step 4) — there is no `pip install` for it. If a teammate skips this
   step, `pre-commit install` still succeeds, but the hook will fail with
   "command not found" on their first commit rather than silently skipping.
-- `scripts/hooks/block_policy_commits.py` (the "no non-interactive
-  `policies/` commits" hook) decides "interactive" via `sys.stdin.isatty()`
-  and the `CI` env var — this is a heuristic, not a hard guarantee, since
-  git's hook invocation environment varies by platform/git version. It's
-  documented as defense-in-depth in the module's own docstring, not as an
-  enforcement of INV-03 itself (that lives in the interceptor).
+- ~~`scripts/hooks/block_policy_commits.py` decides "interactive" via
+  `sys.stdin.isatty()` and the `CI` env var~~ — **resolved 2026-08-31**:
+  this was a real bug, not just a documented heuristic risk. A user ran
+  `git commit` on `policies/*.yaml` from a genuinely interactive terminal
+  and the hook still blocked it, claiming "no TTY on stdin". Reading
+  `pre_commit/util.py`'s own source confirmed why: pre-commit
+  unconditionally opens `os.devnull` as `stdin` for every `language:
+  system` hook it runs, so `sys.stdin.isatty()` is **always** `False`
+  inside any pre-commit hook, human or not — the check had zero signal
+  and only produced false positives. Fixed by dropping the isatty check
+  entirely and keeping only the `CI` env var check (a real signal a
+  normal local shell never sets), renamed to `block-ci-policy-edits`. It
+  no longer claims to detect "a human is at the keyboard" — nothing at
+  the git-hook layer can, once pre-commit strips stdin — only "this
+  wasn't run by an actual CI job." Documented as defense-in-depth in the
+  module's own docstring, not as enforcement of INV-03 itself (that lives
+  in the interceptor).
 - ~~The README's CI badge URL (`github.com/user/ai-agent-firewall`) is a
   placeholder~~ — resolved 2026-08-31: now points at the real repo
   (`Aifaaz-K17/Project-PRAETOR`), though the badge itself can't turn green

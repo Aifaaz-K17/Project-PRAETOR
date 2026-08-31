@@ -70,12 +70,14 @@ repos:
           are runtime output, not source.
         files: '\.(db|sqlite|sqlite3)$'
 
-      - id: block-noninteractive-policy-edits
-        name: Block non-interactive edits to policies/
+      - id: block-ci-policy-edits
+        name: Block CI-run edits to policies/
         description: >
           policies/ is treated as code, never agent-writable (INV-03).
-          Refuses the commit if it looks like it was run from a script or
-          CI rather than a human at a terminal.
+          Refuses the commit if the CI environment variable is set — see
+          scripts/hooks/block_policy_commits.py's docstring for why this
+          no longer also tries (and previously failed) to detect
+          interactivity via stdin.
         language: system
         entry: python scripts/hooks/block_policy_commits.py
         files: '^policies/'
