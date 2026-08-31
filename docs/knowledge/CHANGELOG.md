@@ -36,7 +36,7 @@
 **Revert:** `git revert 9938fcb`
 
 ## 2026-08-31 — Feature: parameter_schema rule type closes the "unknown parameter → DENY" gap
-**Commit:** (pending — code/tests in one commit; `policies/parameter_schema.yaml` committed separately by a human)
+**Commit:** `df82fa2` (code/tests); `policies/parameter_schema.yaml` pending a separate human commit
 **Changed:** `firewall/policy_schema.py` (new `ParameterSchemaRule`, added to the `PolicyRule` discriminated union); `firewall/policy_engine.py` (`_check_unknown_parameters`, consulted once upfront in `evaluate_call` before any other rule votes); `policies/parameter_schema.yaml` (new file — known parameters for all 5 shipped tools); `tests/test_policy_engine.py` (`_load_single_real_rule` updated to also pull in the relevant schema rule so existing isolated tests keep working; 8 new tests for the feature itself); ADR `0011-unknown-parameter-enforcement`.
 **Why:** The confirmed-but-left-open finding from the earlier code-review-fix pass — CLAUDE.md's INV-08 explicitly requires "unknown parameter → DENY," and the engine didn't enforce it. Fixed as a real design decision (not a quick patch): opt-in per tool, so it doesn't retroactively break every synthetic test scenario that predates this feature while still closing the gap for every real, shipped tool.
 **Files:** `firewall/policy_schema.py`, `firewall/policy_engine.py`, `policies/parameter_schema.yaml`, `tests/test_policy_engine.py`, `docs/knowledge/decisions/0011-unknown-parameter-enforcement.md`, `docs/knowledge/concepts/policy-engine.md`, `docs/knowledge/index.md`, `docs/POLICY_GUIDE.md`, `LIMITATIONS.md`
