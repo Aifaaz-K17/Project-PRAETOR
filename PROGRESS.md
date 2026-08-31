@@ -175,10 +175,9 @@ engine ever sees a raw argument.
 
 ### [x] PHASE 4 — Session State, Audit Trail, Anomaly Detection
 - **Completed**: 2026-09-01 · **Commits**: `eef9a98` + `6dc4dd8` (part 1 —
-  session store, audit logger, RBAC-bypass fix); part 2 (anomaly
-  detection, verify_chain/query_logs, logger tests) staged locally,
-  commit pending explicit confirmation per CLAUDE.md §3's phase-gating
-  rule.
+  session store, audit logger, RBAC-bypass fix); `1bcc6d3` (part 2 —
+  anomaly detection, verify_chain/query_logs, logger tests, combined
+  with the pre-Phase-5 security review below into one commit).
 - `firewall/session.py`: `SessionStore` — append-only, one
   `threading.Lock` per session, TTL eviction with an injectable clock
   (INV-13).
@@ -238,8 +237,8 @@ engine ever sees a raw argument.
   opt-in per rule, not automatically enforced.
 
 ### Pre-Phase-5 security review pass
-- **Completed**: 2026-09-01 · **Commit**: pending, staged with Phase 4
-  part 2.
+- **Completed**: 2026-09-01 · **Commit**: `1bcc6d3` (same commit as Phase
+  4 part 2 above).
 - User-requested bug/vulnerability/weakness pass before starting Phase 5,
   plus a standing architecture map (`docs/ARCHITECTURE_MAP.md`, new) so a
   session can orient without re-reading every file.
@@ -309,8 +308,7 @@ engine ever sees a raw argument.
 - Phase 1 verification commands all actually run — see command list above.
 - Phase 2 verification commands all actually run — see command list above.
 - Phase 3 verification commands all actually run — see command list above.
-- Phase 4 verification commands all actually run — see command list above.
-  Part 2's code/tests/docs are staged locally, not yet committed — per
-  CLAUDE.md §3's phase-gating rule, work stops at "phase done, summarized"
-  and waits for explicit confirmation before committing.
-- Ready to proceed to Phase 5 (HITL Approval) upon confirmation.
+- Phase 4 verification commands all actually run — see command list
+  above. Part 2, plus the pre-Phase-5 security review, committed as
+  `1bcc6d3`.
+- Phase 5 (HITL Approval) starting now.
