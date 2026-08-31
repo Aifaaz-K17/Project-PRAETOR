@@ -1,0 +1,52 @@
+# Per-tool parameter schemas (parameter_schema rules) — INV-08: "unknown
+# parameter -> DENY, never an implicit allow."
+#
+# Every parameter a tool's calls carry must be declared here or the whole
+# call is denied outright, before any other rule is even consulted. This
+# is enforcement, not documentation: a compromised LLM can't smuggle an
+# extra, unconstrained argument (e.g. a hypothetical destination-account
+# field no one wrote a rule for) past every other check just because
+# nothing happened to name it.
+#
+# `action`/`requires_approval` are unused for this rule type — always
+# `allow`/`false` by convention (firewall/policy_engine.py ignores both
+# fields here). See ADR 0011 for the full design reasoning, including why
+# this is opt-in per tool rather than a blanket requirement.
+
+default_action: deny
+
+rules:
+  - type: parameter_schema
+    id: schema-read-file
+    tool: read_file
+    action: allow
+    known_parameters: ["path"]
+    description: read_file takes exactly one argument, the path to read.
+
+  - type: parameter_schema
+    id: schema-send-email
+    tool: send_email
+    action: allow
+    known_parameters: ["to", "subject", "body"]
+    description: send_email's recipient, subject line, and message body.
+
+  - type: parameter_schema
+    id: schema-search-web
+    tool: search_web
+    action: allow
+    known_parameters: ["query", "target_host"]
+    description: search_web's query string and the reference site it targets.
+
+  - type: parameter_schema
+    id: schema-transfer-funds
+    tool: transfer_funds
+    action: allow
+    known_parameters: ["amount", "note"]
+    description: transfer_funds' amount and an optional memo.
+
+  - type: parameter_schema
+    id: schema-compose-draft
+    tool: compose_draft
+    action: allow
+    known_parameters: ["subject", "body", "attachment_path"]
+    description: compose_draft's subject, body, and optional attachment.
