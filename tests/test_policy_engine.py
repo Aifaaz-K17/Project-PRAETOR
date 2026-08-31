@@ -29,6 +29,7 @@ from firewall.policy_engine import (
     load_policy_set,
 )
 from firewall.policy_schema import (
+    DomainAllowlistRule,
     ParameterBoundsRule,
     ParameterSchemaRule,
     PathScopeRule,
@@ -700,6 +701,64 @@ def test_INV_05_policy_path_scope_roles_compose_with_rbac_not_bypass_it() -> Non
     assert evaluate_call(analyst_call, loaded).outcome == Outcome.ALLOW
 
 
+def test_INV_05_policy_path_scope_compose_draft_roles_compose_with_rbac() -> None:
+    """A second, real instance of the same bug class ADR 0012 fixed for
+    path-read-file-sandbox and domain-send-email-corp — found and fixed
+    2026-09-01 (ADR 0014). path-compose-draft-attachment-sandbox was left
+    as an unconditional ALLOW grant at the time of ADR 0012's fix, so a
+    role with NO compose_draft RBAC grant at all (e.g. a bare "guest")
+    could still compose a draft with an in-scope attachment — this rule's
+    own ALLOW vote was independently sufficient regardless of role.
+    Isolated-rule check (mirrors the existing path_scope/domain_allowlist
+    regression tests): a role outside `roles` gets no ALLOW vote from
+    this rule alone."""
+    loaded = _load_single_real_rule("path-compose-draft-attachment-sandbox")
+    guest_call = make_call(
+        tool_name="compose_draft",
+        role="guest",
+        args={"subject": "s", "body": "b", "attachment_path": "sandbox/notes.txt"},
+    )
+    assert evaluate_call(guest_call, loaded).outcome == Outcome.DENY
+
+    analyst_call = make_call(
+        tool_name="compose_draft",
+        role="analyst",
+        args={"subject": "s", "body": "b", "attachment_path": "sandbox/notes.txt"},
+    )
+    assert evaluate_call(analyst_call, loaded).outcome == Outcome.ALLOW
+
+
+def test_INV_05_real_policy_set_compose_draft_guest_role_no_longer_bypasses_rbac() -> (
+    None
+):
+    """End-to-end proof against the real, full policy set: before this
+    fix, a role with zero compose_draft RBAC grant (e.g. "guest") was
+    ALLOWED to compose a draft purely because path-compose-draft-
+    attachment-sandbox's unconditional ALLOW vote outvoted the absence of
+    any RBAC grant. Also confirms the fix doesn't disturb the two roles
+    that must still work: analyst gets a plain ALLOW, and intern still
+    gets escalated to NEEDS_APPROVAL rather than losing its approval path
+    entirely."""
+    loaded = load_policy_set(REAL_POLICY_DIR)
+    args = {"subject": "s", "body": "b", "attachment_path": "sandbox/notes.txt"}
+
+    guest_decision = evaluate_call(
+        make_call(tool_name="compose_draft", role="guest", args=args), loaded
+    )
+    assert guest_decision.outcome == Outcome.DENY
+
+    intern_decision = evaluate_call(
+        make_call(tool_name="compose_draft", role="intern", args=args), loaded
+    )
+    assert intern_decision.outcome == Outcome.NEEDS_APPROVAL
+    assert intern_decision.rule_id == "rbac-compose-draft-intern-needs-approval"
+
+    analyst_decision = evaluate_call(
+        make_call(tool_name="compose_draft", role="analyst", args=args), loaded
+    )
+    assert analyst_decision.outcome == Outcome.ALLOW
+
+
 def test_INV_06_policy_path_scope_allowed_root_independent_of_cwd(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -754,6 +813,32 @@ def test_INV_05_policy_domain_allowlist_roles_compose_with_rbac_not_bypass_it() 
     assert evaluate_call(analyst_call, loaded).outcome == Outcome.ALLOW
 
 
+def test_INV_05_real_policy_set_search_web_unrecognized_role_no_longer_bypasses_rbac() -> (
+    None
+):
+    """A third real instance of the same bug class (ADR 0012, ADR 0014):
+    rbac-search-web-everyone's "everyone" is still a specific, enumerated
+    role list (["intern", "analyst", "finance", "admin"]) — INV-08 is a
+    closed-world allowlist. domain-search-web-reference-sites used to be
+    unrestricted, so a role string outside that list entirely (a typo, an
+    unexpected value from a misconfigured session — RBAC is meant to be
+    the single source of truth for "which roles may use this tool at
+    all") still got a plain ALLOW as long as target_host was in-scope.
+    End-to-end proof against the real, full policy set."""
+    loaded = load_policy_set(REAL_POLICY_DIR)
+    args = {"query": "x", "target_host": "docs.python.org"}
+
+    unrecognized_decision = evaluate_call(
+        make_call(tool_name="search_web", role="not-a-real-role", args=args), loaded
+    )
+    assert unrecognized_decision.outcome == Outcome.DENY
+
+    intern_decision = evaluate_call(
+        make_call(tool_name="search_web", role="intern", args=args), loaded
+    )
+    assert intern_decision.outcome == Outcome.ALLOW
+
+
 def test_policy_domain_send_email_partner_needs_approval() -> None:
     loaded = _load_single_real_rule("domain-send-email-partner-needs-approval")
     decision = evaluate_call(
@@ -789,6 +874,65 @@ def test_policy_bounds_transfer_max_amount() -> None:
     )
     assert over.outcome == Outcome.DENY
     assert over.rule_id == "bounds-transfer-max-amount"
+
+
+def test_INV_01_policy_bounds_string_typed_amount_still_enforced() -> None:
+    """Real bug, found and fixed 2026-09-01 (ADR 0014): a numeric-string
+    amount (the shape a real LLM tool-call can emit — JSON args parsed
+    from text, where a model wrote `"amount": "999999"` instead of a
+    bare JSON number) used to sail straight past this bound, because the
+    old check only ever compared a native `int`/`float`. The fix
+    coerces a numeric-looking string before comparing, and fails closed
+    (denies) on anything that can't be coerced at all — never silently
+    treats "wrong type" as "no bound applies"."""
+    loaded = _load_single_real_rule("bounds-transfer-max-amount")
+
+    over_cap_as_string = evaluate_call(
+        make_call(tool_name="transfer_funds", args={"amount": "5000"}), loaded
+    )
+    assert over_cap_as_string.outcome == Outcome.DENY
+    assert over_cap_as_string.rule_id == "bounds-transfer-max-amount"
+
+    within_cap_as_string = evaluate_call(
+        make_call(tool_name="transfer_funds", args={"amount": "500"}), loaded
+    )
+    assert within_cap_as_string.outcome == Outcome.DENY  # only rule is deny-shaped
+
+
+def test_INV_01_policy_bounds_uncoercible_amount_fails_closed() -> None:
+    """A value that isn't a number and can't be parsed as one (a bool, a
+    non-numeric string, a list) must be treated as a bounds violation,
+    not silently allowed to skip the check entirely."""
+    loaded = _load_single_real_rule("bounds-transfer-max-amount")
+
+    for bad_amount in (True, "not-a-number", [1, 2, 3]):
+        decision = evaluate_call(
+            make_call(tool_name="transfer_funds", args={"amount": bad_amount}), loaded
+        )
+        assert (
+            decision.outcome == Outcome.DENY
+        ), f"amount={bad_amount!r} should fail closed, got {decision.outcome}"
+        assert decision.rule_id == "bounds-transfer-max-amount"
+
+
+def test_INV_01_real_policy_set_denies_string_typed_over_cap_transfer() -> None:
+    """End-to-end proof against the real, full policy set (not an isolated
+    rule): before this fix, a `finance`-role call with `amount` as a
+    numeric string over the 1000 cap was ALLOWED — the RBAC grant voted
+    ALLOW and the two amount-bound DENY rules silently never matched a
+    string-typed value. Independently reproduced against the real
+    `policies/` directory before writing the fix (see ADR 0014)."""
+    loaded = load_policy_set(REAL_POLICY_DIR)
+    decision = evaluate_call(
+        make_call(
+            tool_name="transfer_funds",
+            role="finance",
+            args={"amount": "999999", "note": "legitimate-looking memo"},
+        ),
+        loaded,
+    )
+    assert decision.outcome == Outcome.DENY
+    assert decision.rule_id == "bounds-transfer-max-amount"
 
 
 def test_policy_bounds_transfer_non_negative_triggers_on_negative() -> None:
@@ -1148,6 +1292,53 @@ def test_all_shipped_rules_have_at_least_one_test() -> None:
     assert missing == [], f"rules with no test coverage: {missing}"
 
 
+def test_INV_05_no_unrestricted_allowlist_rule_can_bypass_an_rbac_rule() -> None:
+    """Structural guard for the bug class first found via testing in
+    Phase 4 (ADR 0012), then found TWICE more by a deliberate review pass
+    on 2026-09-01 (ADR 0014) on rules ADR 0012 itself did not touch
+    (path-compose-draft-attachment-sandbox, domain-search-web-reference-
+    sites). A `path_scope`/`domain_allowlist` rule with `action: allow`,
+    no `requires_approval`, and an empty `roles` field casts a plain
+    ALLOW vote for ANY role string at all — including one no `rbac` rule
+    for that tool ever named. Conflict resolution treats every matching
+    ALLOW vote as independently sufficient (ADR 0009), so that
+    unrestricted vote silently outvotes whatever restriction the tool's
+    `rbac` rule(s) meant to impose, rather than composing with it — even
+    when the `rbac` rule's own role list looks "complete" (e.g.
+    rbac-search-web-everyone), because RBAC is a closed, enumerated
+    allowlist (INV-08), not an open one, and an unrestricted allowlist
+    rule doesn't check role at all.
+
+    This walks every rule actually shipped in `policies/` and fails if a
+    new rule (or an edit to an existing one) reintroduces the pattern,
+    instead of relying on a human noticing during review — the exact
+    structural guard ADR 0012's "Consequences" section named as a
+    reasonable follow-up rather than something built at the time."""
+    loaded = load_policy_set(REAL_POLICY_DIR)
+
+    tools_with_an_rbac_rule = {
+        rule.tool for rule in loaded.policy_set.rules if isinstance(rule, RbacRule)
+    }
+
+    violations = [
+        rule.id
+        for rule in loaded.policy_set.rules
+        if isinstance(rule, (PathScopeRule, DomainAllowlistRule))
+        and rule.action == RuleAction.ALLOW
+        and not rule.requires_approval
+        and not rule.roles
+        and rule.tool in tools_with_an_rbac_rule
+    ]
+
+    assert violations == [], (
+        f"these path_scope/domain_allowlist rules are unrestricted "
+        f"(action: allow, no requires_approval, empty roles) despite an "
+        f"rbac rule existing for the same tool — they will silently "
+        f"outvote that rbac rule's role restriction instead of composing "
+        f"with it (ADR 0012/0014): {violations}"
+    )
+
+
 # ---------------------------------------------------------------------------
 # The benign-calls corpus (false-positive check)
 # ---------------------------------------------------------------------------
@@ -1370,3 +1561,152 @@ def test_INV_10_policy_engine_with_audit_logger_shadow_logs_every_decision(
     assert rows[0].outcome == "ALLOW"
     assert rows[1].outcome == "DENY"
     assert rows[1].prev_hash == rows[0].entry_hash
+
+
+# ---------------------------------------------------------------------------
+# PolicyEngine — anomaly detection integration (firewall/anomaly.py, ADR 0013)
+# ---------------------------------------------------------------------------
+
+
+def test_policy_engine_enable_anomaly_detection_without_session_store_raises() -> None:
+    """Three of the four detectors need real session history/declared-tools
+    state — without a session_store they'd always see empty inputs and
+    never fire, which is misleading enough to refuse outright."""
+    loaded = load_policy_set(REAL_POLICY_DIR)
+    with pytest.raises(ValueError, match="session_store"):
+        PolicyEngine(loaded, enable_anomaly_detection=True)
+
+
+def test_policy_engine_anomaly_detection_disabled_by_default() -> None:
+    """A call that would trip the high-risk-sequence detector must sail
+    through unaffected when enable_anomaly_detection is left at its
+    default (False), even with a session_store present."""
+    loaded = load_policy_set(REAL_POLICY_DIR)
+    store = SessionStore()
+    engine = PolicyEngine(loaded, session_store=store)
+
+    draft = engine.evaluate(
+        make_call(
+            tool_name="compose_draft",
+            role="analyst",
+            session_id="s1",
+            args={"subject": "s", "body": "b", "attachment_path": "sandbox/notes.txt"},
+        )
+    )
+    assert draft.outcome == Outcome.ALLOW
+
+    read = engine.evaluate(
+        make_call(
+            tool_name="read_file",
+            role="analyst",
+            session_id="s1",
+            args={"path": "notes.txt"},
+        )
+    )
+    assert read.outcome == Outcome.ALLOW
+
+    send = engine.evaluate(
+        make_call(
+            tool_name="send_email",
+            role="analyst",
+            session_id="s1",
+            args={"to": "a@corp.example.com"},
+        )
+    )
+    assert send.outcome == Outcome.ALLOW
+
+
+def test_INV_04_policy_engine_anomaly_detection_escalates_high_risk_sequence() -> None:
+    """End-to-end: a call that policy alone would ALLOW gets escalated to
+    NEEDS_APPROVAL once it matches a high-risk sequence — the anomaly
+    layer folding in on top of an already-computed policy Decision,
+    exactly as ADR 0013 describes."""
+    loaded = load_policy_set(REAL_POLICY_DIR)
+    store = SessionStore()
+    engine = PolicyEngine(loaded, session_store=store, enable_anomaly_detection=True)
+
+    draft = engine.evaluate(
+        make_call(
+            tool_name="compose_draft",
+            role="analyst",
+            session_id="s1",
+            args={"subject": "s", "body": "b", "attachment_path": "sandbox/notes.txt"},
+        )
+    )
+    assert draft.outcome == Outcome.ALLOW
+
+    read = engine.evaluate(
+        make_call(
+            tool_name="read_file",
+            role="analyst",
+            session_id="s1",
+            args={"path": "notes.txt"},
+        )
+    )
+    assert read.outcome == Outcome.ALLOW
+
+    send = engine.evaluate(
+        make_call(
+            tool_name="send_email",
+            role="analyst",
+            session_id="s1",
+            args={"to": "a@corp.example.com"},
+        )
+    )
+    assert send.outcome == Outcome.NEEDS_APPROVAL
+    assert send.rule_id == "anomaly:high_risk_sequence"
+
+
+def test_INV_08_policy_engine_anomaly_detection_halts_tool_outside_declared_set() -> (
+    None
+):
+    """A call that policy alone would ALLOW gets denied outright once the
+    session declared a narrower tool set than what's being called — HALT
+    raises the outcome all the way to DENY, not just NEEDS_APPROVAL."""
+    loaded = load_policy_set(REAL_POLICY_DIR)
+    store = SessionStore()
+    store.declare_session(
+        "s1", identity="u1", role="intern", declared_tools=frozenset({"read_file"})
+    )
+    engine = PolicyEngine(loaded, session_store=store, enable_anomaly_detection=True)
+
+    decision = engine.evaluate(
+        make_call(
+            tool_name="search_web",
+            role="intern",
+            session_id="s1",
+            args={
+                "query": "python list comprehension",
+                "target_host": "docs.python.org",
+            },
+        )
+    )
+    assert decision.outcome == Outcome.DENY
+    assert decision.rule_id == "anomaly:tool_outside_declared_set"
+
+
+def test_policy_engine_anomaly_detection_never_records_a_halted_call_into_history() -> (
+    None
+):
+    """A call HALTed by anomaly detection must not be recorded into
+    session history — the same "only ALLOWed calls count" rule that
+    already applies to a plain policy DENY."""
+    loaded = load_policy_set(REAL_POLICY_DIR)
+    store = SessionStore()
+    store.declare_session(
+        "s1", identity="u1", role="intern", declared_tools=frozenset({"read_file"})
+    )
+    engine = PolicyEngine(loaded, session_store=store, enable_anomaly_detection=True)
+
+    engine.evaluate(
+        make_call(
+            tool_name="search_web",
+            role="intern",
+            session_id="s1",
+            args={
+                "query": "python list comprehension",
+                "target_host": "docs.python.org",
+            },
+        )
+    )
+    assert store.get_history("s1") == ()

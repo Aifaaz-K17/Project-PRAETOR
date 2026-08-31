@@ -96,6 +96,16 @@ class SessionStore:
         minimal session on first use — but doing it at real session
         creation (alongside `firewall.context.bind_principal`) is how a
         caller gets the declared-toolset anomaly check for free.
+
+        A real (re-)initialization, not a merge: re-declaring an existing
+        `session_id` starts its history over. Documented behavior, not
+        accidental — see `test_declare_session_resets_history_if_called_again`
+        in `tests/test_session.py`. Safe because `declare_session` is
+        only ever called by trusted server-side code at real session
+        creation, the same trust boundary as
+        `firewall.context.bind_principal` — never by agent-reachable
+        code, so "re-declaring resets history" is not an
+        attacker-reachable capability.
         """
         now = self._clock()
         with self._lock_for(session_id):

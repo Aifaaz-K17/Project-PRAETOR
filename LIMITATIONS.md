@@ -321,17 +321,133 @@ forgets to set `roles` to match, reintroduces this exact bug, and nothing
 in the engine or test suite catches that automatically — see ADR 0012's
 "Consequences" for why an automatic derivation was rejected and what a
 stronger structural guard would need to check.
+**Update 2026-09-01:** the structural guard now exists — see the
+pre-Phase-5 review pass below (ADR 0014) — which meaningfully narrows
+this scoping limit (a *plain-ALLOW*-shaped instance of the bug now fails
+`pytest` immediately) without fully closing it (see that section's own
+residual: a `requires_approval`-shaped unrestricted rule is still not
+checked).
 
-### Remaining Phase 4 scope (not yet built as of this note)
+### Pre-Phase-5 security review pass (2026-09-01)
 
-- `firewall/anomaly.py` (rule-based anomaly detection: call-volume spike,
-  tool-outside-declared-set, high-risk sequence, argument-entropy jump) —
-  not started.
-- `scripts/verify_chain.py` and `scripts/query_logs.py` are still Phase-0
-  stubs; `firewall/logger.py`'s hash-chained audit log now exists for them
-  to walk/query against, but the real implementations aren't written yet.
-- `firewall/logger.py`'s hash-chain tamper-detection and redaction
-  behavior have been verified only via ad hoc smoke-testing scripts, not
-  formal `pytest` tests yet — a dedicated `tests/test_logger.py` (tamper
-  with a row and assert `verify_chain.py` detects it; plant a fake secret
-  and assert it never reaches the DB) is still to be written.
+A deliberate bug/vulnerability/weakness review, requested before starting
+Phase 5, found three real, independently-reproduced issues and built one
+structural guard against a recurrence of two of them. Full incident
+writeup: ADR
+[`0014-phase4-security-review-findings`](docs/knowledge/decisions/0014-phase4-security-review-findings.md).
+
+**Fixed:**
+- **Numeric-string type confusion bypassed `parameter_bounds`'
+  `min`/`max` checks entirely.** `_matches_parameter_bounds` only ever
+  compared a native `int`/`float`; a value like `"amount": "999999"` (a
+  JSON-string number — a realistic shape for LLM tool-call output, parsed
+  before the tool's own Pydantic schema ever coerces it) silently matched
+  nothing, letting a `finance`-role `transfer_funds` call with a
+  999999-unit amount past `bounds-transfer-max-amount` (`max: 1000`) and
+  get **ALLOWED** by `rbac-transfer-finance-and-admin` instead of denied.
+  Fixed with `_coerce_numeric`: parses a numeric-looking string, and
+  fails closed (treats as a bounds violation) on anything else that isn't
+  a native number — never silently skips the check. New tests:
+  `test_INV_01_policy_bounds_string_typed_amount_still_enforced`,
+  `test_INV_01_policy_bounds_uncoercible_amount_fails_closed`,
+  `test_INV_01_real_policy_set_denies_string_typed_over_cap_transfer`.
+- **Two more real instances of ADR 0012's RBAC-composition bug**, on
+  rules ADR 0012 didn't touch: `path-compose-draft-attachment-sandbox`
+  (a role with zero `compose_draft` RBAC grant, e.g. `"guest"`, was
+  ALLOWED to compose a draft) and `domain-search-web-reference-sites`
+  (a role string not named by `rbac-search-web-everyone` at all was
+  still ALLOWED to search). Both fixed by populating `roles` to match
+  their sibling `rbac` rule(s), same mechanism as ADR 0012. New tests:
+  `test_INV_05_policy_path_scope_compose_draft_roles_compose_with_rbac`,
+  `test_INV_05_real_policy_set_compose_draft_guest_role_no_longer_bypasses_rbac`,
+  `test_INV_05_real_policy_set_search_web_unrecognized_role_no_longer_bypasses_rbac`.
+- **Built the structural guard ADR 0012 named as a follow-up but didn't
+  build**: `test_INV_05_no_unrestricted_allowlist_rule_can_bypass_an_rbac_rule`
+  walks every `path_scope`/`domain_allowlist` rule in the real, loaded
+  policy set and fails if one is unrestricted while an `rbac` rule exists
+  for the same tool — verified (against a synthetic reconstruction of the
+  pre-fix shape, not just the now-fixed real files) that it actually
+  catches the pattern, not merely passes trivially.
+
+**Checked and found correct, not a bug (recorded so the "was this
+checked" question has an answer):** `firewall/session.py`'s
+`SessionStore.declare_session` unconditionally resets a session's call
+history. An early step in this review misread that as contradicting the
+module's "append-only" docstring language before finding
+`test_declare_session_resets_history_if_called_again` in
+`tests/test_session.py` — deliberate, tested behavior (the append-only
+claim scopes to `record_call` specifically, and `declare_session` is only
+ever called by trusted server-side code, never agent-reachable, per
+INV-05's trust model). No functional change; a one-line docstring
+clarification was kept.
+
+**Still real, honest scope limits, not fully closed (see ADR 0014
+"Consequences"):**
+- The structural guard only covers `path_scope`/`domain_allowlist` vs.
+  `rbac`; it deliberately does not flag a `requires_approval`-shaped
+  unrestricted rule (e.g. `domain-send-email-partner-needs-approval`),
+  since NEEDS_APPROVAL can't "win outright" over an RBAC restriction the
+  way a plain ALLOW can under today's conflict resolution. Once Phase 5's
+  HITL evaluator exists, that rule would still hand a role with no
+  `rbac` grant at all a path to human approval — tracked here, not fixed,
+  since fixing it now means guessing at not-yet-built Phase 5 semantics.
+- The guard does not check for an analogous composition gap against
+  `sequence` or `rate` rules — this review found no evidence of one, but
+  didn't exhaustively rule it out either.
+- One review pass at a fixed effort level, following the same discipline
+  as the Phase 3 code-review-fix pass (each finding independently
+  reproduced before being called a bug) — real findings, not a
+  completeness claim.
+
+### Phase 4 completed (2026-09-01)
+
+- `firewall/anomaly.py`: four pure-function detectors (call-volume spike,
+  tool-outside-declared-set, high-risk sequence, argument-entropy jump),
+  `apply_anomaly_findings` folding results into a `Decision` without ever
+  downgrading a policy DENY. Wired into `PolicyEngine` as an opt-in
+  `enable_anomaly_detection` flag that requires a `session_store` (raises
+  `ValueError` otherwise — three of the four detectors would silently
+  never fire without real session state). See ADR
+  [`0013-rule-based-anomaly-detection`](docs/knowledge/decisions/0013-rule-based-anomaly-detection.md).
+  25 tests in `tests/test_anomaly.py` (each detector in isolation,
+  orchestration order/determinism, every fold-in case including "never
+  downgrades an existing DENY") plus 5 `PolicyEngine`-integration tests in
+  `tests/test_policy_engine.py`.
+- `firewall/logger.py.verify_chain` (shared by `scripts/verify_chain.py`
+  and directly tested) and `scripts/query_logs.py` are real
+  implementations now, replacing the Phase 0 stubs — `tests/test_logger.py`
+  (20 tests) proves the hash chain against a deliberately tampered
+  database (edited row, deleted row, "reports only the first break") and
+  proves `redact_value`/the end-to-end logger never persist a planted
+  fake secret.
+- **Real bug found and fixed while finishing this phase**: `mypy
+  firewall/` failed with 4 errors the moment `verify_chain` started
+  *reading* attribute values off a queried `AuditLogRow` instance (the
+  model's existing `log_call` path only ever *constructs* rows, never
+  reads them back) — this project's legacy `Column(...)`-style
+  declarative model (no `Mapped[...]` typing, no SQLAlchemy mypy plugin)
+  is invisible to mypy as returning a real `str`/`int` at the instance
+  level. Fixed with narrow, documented `cast(str, ...)` calls at the four
+  read sites in `_row_fields_for_hashing`/`verify_chain`, not a global
+  suppression.
+
+**Honest scope limits, not fully closed (see ADR 0013's "Consequences"
+for the full reasoning):**
+- The high-risk-sequence list (3 pairs) and entropy threshold (4.5
+  bits/char) are curated, example-scale choices demonstrating the
+  mechanism against this project's 5 demo tools — not a claim of general
+  attack-shape coverage.
+- The entropy threshold has not been calibrated against
+  `tests/fixtures/benign_calls.yaml` — TODO(verify) for Phase 7's
+  false-positive-rate work.
+- "Argument entropy *spike*" is, honestly, an absolute threshold against
+  typical natural-language entropy, not a true per-session
+  baseline-relative jump — `SessionHistoryEntry` deliberately stores no
+  argument content (see ADR 0013 "Alternatives considered" for why
+  extending it was rejected).
+- `CALL_VOLUME_MAX_CALLS`/`CALL_VOLUME_WINDOW_SECONDS` are round numbers
+  chosen for headroom, not derived from load testing — same honest
+  caveat Phase 3's `MAX_RULE_COUNT` etc. already carry.
+- `demo_agent/interception_demo.py` (Phase 1) still does not wire up the
+  real `PolicyEngine`/`SessionStore`/`AuditLogger`/anomaly detection —
+  that's Phase 6's demo-scenario task, not a Phase 4 gap.

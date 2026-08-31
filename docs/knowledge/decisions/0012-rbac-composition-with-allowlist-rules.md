@@ -120,6 +120,12 @@ in `tests/test_policy_engine.py`.
   test that walks every tool with both an `rbac` rule and an unrestricted
   `path_scope`/`domain_allowlist` rule and flags the overlap) is a
   reasonable follow-up, not built here — see `LIMITATIONS.md`.
+  **Update 2026-09-01:** this risk was not hypothetical — a deliberate
+  review pass found this exact pattern already present on two more
+  shipped rules (`path-compose-draft-attachment-sandbox`,
+  `domain-search-web-reference-sites`), fixed the same way, and the
+  named structural guard test was built. See
+  [[0014-phase4-security-review-findings]].
 - `compose_draft`'s coincidental safety (NEEDS_APPROVAL outranking the
   unconditional ALLOW) is not something to rely on if that rule's
   `requires_approval` flag is ever removed or its RBAC rule changed —

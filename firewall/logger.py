@@ -25,7 +25,7 @@ import re
 import threading
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Self
+from typing import Any, Self, cast
 
 from sqlalchemy import Column, Integer, String, Text, create_engine, event, select
 from sqlalchemy.orm import declarative_base, sessionmaker
@@ -181,6 +181,116 @@ class LoggedEntry:
     call_id: str
     entry_hash: str
     prev_hash: str
+
+
+@dataclass(frozen=True)
+class ChainVerificationResult:
+    """What `verify_chain` hands back. `first_break` is a human-readable
+    description of the first row where the chain doesn't hold — `None`
+    means every row checked out. Deliberately reports only the *first*
+    break, not every downstream row it invalidates: once one row is
+    tampered with, every row after it will also fail (its `prev_hash`
+    no longer matches), so listing all of them would just be noise
+    obscuring where the tampering actually happened.
+    """
+
+    ok: bool
+    rows_checked: int
+    first_break: str | None = None
+
+
+def _row_fields_for_hashing(row: AuditLogRow) -> dict[str, Any]:
+    """Reconstructs the exact dict `AuditLogger.log_call` fed to
+    `compute_entry_hash` when this row was first written, from what's
+    actually stored — used both to write a row and to re-verify one, so
+    the two can never silently drift apart.
+
+    The `cast(str, ...)` calls below are a mypy-only workaround: this
+    model uses legacy `Column(...)` class attributes (not `Mapped[...]`),
+    so mypy sees each attribute as `Column[str]` even on an *instance* —
+    it has no plugin telling it SQLAlchemy's descriptor protocol returns
+    the real `str` value at runtime, which every test in
+    `tests/test_logger.py` confirms it does.
+    """
+    return {
+        "call_id": cast(str, row.call_id),
+        "session_id": cast(str, row.session_id),
+        "identity": cast(str, row.identity),
+        "role": cast(str, row.role),
+        "tool_name": cast(str, row.tool_name),
+        "redacted_args": json.loads(cast(str, row.redacted_args_json)),
+        "outcome": cast(str, row.outcome),
+        "matched_rule_ids": json.loads(cast(str, row.matched_rule_ids_json)),
+        "reason": cast(str, row.reason),
+        "policy_set_hash": cast(str, row.policy_set_hash),
+        "latency_ns": row.latency_ns,
+        "timestamp_utc": cast(str, row.timestamp_utc),
+    }
+
+
+def verify_chain(db_path: str | Path) -> ChainVerificationResult:
+    """Walks every row in `db_path` in insertion order and confirms the
+    hash chain (INV-10) is intact: each row's `prev_hash` must equal the
+    previous row's `entry_hash` (catches a deleted or reordered row), and
+    recomputing `entry_hash` from the row's own stored content must match
+    what's stored (catches an edited row). Stops and reports at the first
+    break — see `ChainVerificationResult`.
+
+    Deliberately does not create the database file if it's missing (unlike
+    `AuditLogger`, which is allowed to create a fresh one) — a verify tool
+    silently reporting "OK" against a database it just created out of thin
+    air would be worse than useless.
+    """
+    path = Path(db_path)
+    if not path.exists():
+        return ChainVerificationResult(
+            ok=False, rows_checked=0, first_break=f"database file not found: {path}"
+        )
+
+    engine = create_engine(f"sqlite:///{path}", future=True)
+    try:
+        session_factory = sessionmaker(bind=engine, future=True)
+        with session_factory() as session:
+            rows = (
+                session.execute(select(AuditLogRow).order_by(AuditLogRow.id))
+                .scalars()
+                .all()
+            )
+
+        expected_prev_hash: str = GENESIS_HASH
+        for checked, row in enumerate(rows, start=1):
+            if row.prev_hash != expected_prev_hash:
+                return ChainVerificationResult(
+                    ok=False,
+                    rows_checked=checked,
+                    first_break=(
+                        f"row id={row.id} call_id={row.call_id!r}: prev_hash "
+                        f"mismatch (expected {expected_prev_hash}, stored "
+                        f"{row.prev_hash}) — an earlier row was edited, "
+                        f"deleted, or reordered"
+                    ),
+                )
+
+            recomputed_hash = compute_entry_hash(
+                _row_fields_for_hashing(row), cast(str, row.prev_hash)
+            )
+            if recomputed_hash != row.entry_hash:
+                return ChainVerificationResult(
+                    ok=False,
+                    rows_checked=checked,
+                    first_break=(
+                        f"row id={row.id} call_id={row.call_id!r}: entry_hash "
+                        f"mismatch (recomputed {recomputed_hash}, stored "
+                        f"{row.entry_hash}) — this row's own content was "
+                        f"edited after being written"
+                    ),
+                )
+
+            expected_prev_hash = cast(str, row.entry_hash)
+
+        return ChainVerificationResult(ok=True, rows_checked=len(rows))
+    finally:
+        engine.dispose()
 
 
 class AuditLogger:

@@ -1,6 +1,6 @@
 # Praetor — Project Progress Tracking
 
-## Current Status: Phase 3 Complete (2026-08-31)
+## Current Status: Phase 4 Complete (2026-09-01)
 
 Phase plan below supersedes the earlier 0–8 outline: Phase 2 is now a
 dedicated Canonicalization layer, built and tested before the policy
@@ -173,9 +173,105 @@ engine ever sees a raw argument.
   live interceptor (needs Phase 4's session store), and the ReDoS linter's
   best-effort (not exhaustive) scope.
 
-### [ ] PHASE 4 — Session State, Audit Trail, Anomaly Detection
-- `firewall/session.py`, `firewall/logger.py` (SQLite/WAL, hash-chained —
-  INV-10, redaction — INV-11), `firewall/anomaly.py` (rule-based only).
+### [x] PHASE 4 — Session State, Audit Trail, Anomaly Detection
+- **Completed**: 2026-09-01 · **Commits**: `eef9a98` + `6dc4dd8` (part 1 —
+  session store, audit logger, RBAC-bypass fix); part 2 (anomaly
+  detection, verify_chain/query_logs, logger tests) staged locally,
+  commit pending explicit confirmation per CLAUDE.md §3's phase-gating
+  rule.
+- `firewall/session.py`: `SessionStore` — append-only, one
+  `threading.Lock` per session, TTL eviction with an injectable clock
+  (INV-13).
+- `firewall/logger.py`: `AuditLogger` — SHA-256 hash-chained rows over
+  WAL-mode SQLite (INV-10), `redact_value` secret-pattern redaction
+  (INV-11), context-manager `close()`; `verify_chain`/
+  `ChainVerificationResult` — walks the chain, reports the first tampered
+  row.
+- `firewall/anomaly.py`: four pure-function detectors (call-volume spike,
+  tool-outside-declared-set, high-risk sequence, argument-entropy jump),
+  `apply_anomaly_findings` folding results into a `Decision` — never
+  downgrades an existing DENY (INV-04: still zero LLM/heuristic scoring
+  in the decision path). Wired into `PolicyEngine` as an opt-in
+  `enable_anomaly_detection` flag requiring a `session_store`.
+- `firewall/policy_engine.py`: `PolicyEngine` now takes optional
+  `session_store`/`audit_logger`/`enable_anomaly_detection`; records every
+  ALLOWed call's history, shadow-logs every decision with latency, closes
+  Phase 3's "session history always empty" gap for `sequence`/`rate`
+  rules.
+- `scripts/verify_chain.py` and `scripts/query_logs.py`: real CLI
+  implementations, replacing the Phase 0 stubs.
+- `tests/test_session.py` (12 tests, incl. an 8-thread×200-call
+  concurrency test), `tests/test_logger.py` (20 tests — tamper detection
+  on an edited/deleted row, redaction end-to-end against a planted fake
+  secret), `tests/test_anomaly.py` (25 tests), plus `PolicyEngine`
+  session/audit/anomaly-integration tests and the RBAC-composition
+  regression tests in `tests/test_policy_engine.py`.
+- **Real bug found and fixed (Phase 4 part 1)**: `path_scope`/
+  `domain_allowlist` rules were unconditional `action: allow` grants
+  matching any role, silently outvoting a co-located `rbac` rule's role
+  restriction on the same tool under conflict resolution — an `intern`
+  could read any in-scope file / email the corp domain despite no RBAC
+  grant. Fixed with an opt-in `roles` field on both rule types. See ADR
+  [`0012-rbac-composition-with-allowlist-rules`](docs/knowledge/decisions/0012-rbac-composition-with-allowlist-rules.md).
+- **Real bug found and fixed (Phase 4 part 2)**: `mypy firewall/` failed
+  with 4 errors once `verify_chain` started reading attribute values off
+  a queried `AuditLogRow` instance — the legacy `Column(...)`-style
+  declarative model (no `Mapped[...]` typing, no SQLAlchemy mypy plugin)
+  is invisible to mypy as returning a real `str`/`int` at the instance
+  level. Fixed with four narrow, documented `cast(str, ...)` calls at the
+  actual read sites.
+- ADRs [`0012-rbac-composition-with-allowlist-rules`](docs/knowledge/decisions/0012-rbac-composition-with-allowlist-rules.md)
+  and [`0013-rule-based-anomaly-detection`](docs/knowledge/decisions/0013-rule-based-anomaly-detection.md).
+- New pinned dependency: `sqlalchemy==2.0.52` (previously only
+  transitive).
+- **Verified locally**: `ruff check .`, `black --check .`,
+  `mypy firewall/`, `pytest -v` (318 passed, 1 skipped across the whole
+  suite), `bandit -r firewall/` (0 issues), `pip-audit -r requirements.txt`
+  (0 known vulns) — see phase summary in conversation for full pasted
+  output.
+- **Known issues**: see `LIMITATIONS.md` Phase 4 section — anomaly
+  detection's thresholds/pattern lists are curated and example-scale, not
+  general attack-shape coverage; the entropy threshold isn't yet
+  calibrated against the benign-calls corpus; `demo_agent/` still doesn't
+  wire up the real `PolicyEngine`/`SessionStore`/`AuditLogger`/anomaly
+  detection (Phase 6's task); the RBAC-composition fix (ADR 0012) is
+  opt-in per rule, not automatically enforced.
+
+### Pre-Phase-5 security review pass
+- **Completed**: 2026-09-01 · **Commit**: pending, staged with Phase 4
+  part 2.
+- User-requested bug/vulnerability/weakness pass before starting Phase 5,
+  plus a standing architecture map (`docs/ARCHITECTURE_MAP.md`, new) so a
+  session can orient without re-reading every file.
+- **3 real bugs found, independently reproduced, and fixed**: (1) a
+  numeric-string value (e.g. `"amount": "999999"`) silently bypassed
+  `parameter_bounds`' `min`/`max` checks entirely, letting an over-cap
+  `transfer_funds` call through — fixed with `_coerce_numeric`, fails
+  closed on anything unparseable; (2) `path-compose-draft-attachment-
+  sandbox` and (3) `domain-search-web-reference-sites` were both
+  unrestricted `path_scope`/`domain_allowlist` rules — a second and third
+  real instance of ADR 0012's RBAC-composition bug, on rules that fix
+  didn't touch. Both fixed the same way (populate `roles`).
+- **1 structural guard added**: `test_INV_05_no_unrestricted_allowlist_rule_can_bypass_an_rbac_rule`
+  — the guard ADR 0012 named as a follow-up but didn't build; verified it
+  actually catches the pre-fix pattern (synthetic reconstruction), not
+  just passes trivially against the now-fixed files.
+- **1 suspected issue checked and found already correct**:
+  `SessionStore.declare_session`'s history-reset behavior was
+  misread as a bug before finding it's deliberate, existing, tested
+  behavior (`test_declare_session_resets_history_if_called_again`) —
+  reverted the attempted fix; kept a one-line docstring clarification.
+  Recorded so "was this checked" has an honest answer either way.
+- ADR [`0014-phase4-security-review-findings`](docs/knowledge/decisions/0014-phase4-security-review-findings.md)
+  — full writeup of all four items above.
+- **Verified locally**: `ruff check .`, `black --check .`,
+  `mypy firewall/`, `pytest -v` (325 passed, 1 skipped), `bandit -r firewall/`
+  (0 issues), `pip-audit -r requirements.txt` (0 known vulns) — re-run
+  after each individual fix, not just once at the end.
+- **Known issues**: see `LIMITATIONS.md`'s new section — the structural
+  guard doesn't cover a `requires_approval`-shaped unrestricted rule
+  (e.g. `domain-send-email-partner-needs-approval`), and doesn't check
+  for an analogous gap against `sequence`/`rate` rules.
 
 ### [ ] PHASE 5 — HITL Approval
 - `firewall/hitl.py`: blocking CLI approval, sanitized rendering (INV-12),
@@ -213,4 +309,8 @@ engine ever sees a raw argument.
 - Phase 1 verification commands all actually run — see command list above.
 - Phase 2 verification commands all actually run — see command list above.
 - Phase 3 verification commands all actually run — see command list above.
-- Ready to proceed to Phase 4 (Session State, Audit Trail, Anomaly Detection) upon confirmation.
+- Phase 4 verification commands all actually run — see command list above.
+  Part 2's code/tests/docs are staged locally, not yet committed — per
+  CLAUDE.md §3's phase-gating rule, work stops at "phase done, summarized"
+  and waits for explicit confirmation before committing.
+- Ready to proceed to Phase 5 (HITL Approval) upon confirmation.

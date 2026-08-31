@@ -28,6 +28,7 @@ import regex
 import yaml
 from pydantic import ValidationError
 
+from firewall.anomaly import apply_anomaly_findings, detect_anomalies
 from firewall.canonicalize import (
     canonical_email,
     canonical_host,
@@ -280,6 +281,33 @@ def _check_unknown_parameters(call: CallRecord, loaded: LoadedPolicySet) -> str 
     return None
 
 
+def _coerce_numeric(value: Any) -> float | None:
+    """Best-effort numeric coercion for a `min`/`max` bounds check.
+
+    A native `int`/`float` (never `bool` — `bool` is a `int` subclass in
+    Python, and a boolean has no sensible reading as an amount) is
+    returned as-is. A numeric-looking `str` (e.g. `"amount": "500"`
+    instead of a bare JSON number — a real, observed shape: LLM
+    tool-calling output is parsed from JSON text, and a model can emit a
+    number as a quoted string) is parsed with `float()`. Anything else —
+    an unparseable string, `None` already excluded by the caller, a list,
+    a dict, a `bool` — returns `None`, and the caller treats that as a
+    bounds violation rather than silently skipping the check (INV-01):
+    see `test_INV_01_policy_bounds_string_typed_amount_still_enforced`
+    for the real bypass this closes.
+    """
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float)):
+        return float(value)
+    if isinstance(value, str):
+        try:
+            return float(value)
+        except ValueError:
+            return None
+    return None
+
+
 def _matches_parameter_bounds(
     rule: ParameterBoundsRule,
     call: CallRecord,
@@ -288,20 +316,21 @@ def _matches_parameter_bounds(
     value = call.canonical_args.get(rule.parameter)
     if value is None:
         return False
-    if (
-        rule.min is not None
-        and isinstance(value, (int, float))
-        and not isinstance(value, bool)
-        and value < rule.min
-    ):
-        return True
-    if (
-        rule.max is not None
-        and isinstance(value, (int, float))
-        and not isinstance(value, bool)
-        and value > rule.max
-    ):
-        return True
+    if rule.min is not None or rule.max is not None:
+        numeric_value = _coerce_numeric(value)
+        if numeric_value is None:
+            # Not a type/shape a min/max bound can safely be evaluated
+            # against (wrong type, unparseable string, a bool) — fail
+            # closed rather than silently treat "can't check" as "no
+            # bound applies". A real bug this fixed: `amount: "999999"`
+            # (a numeric string) sailed straight past
+            # `bounds-transfer-max-amount` (max: 1000), because the old
+            # check only ever compared a native int/float — see ADR 0014.
+            return True
+        if rule.min is not None and numeric_value < rule.min:
+            return True
+        if rule.max is not None and numeric_value > rule.max:
+            return True
 
     if rule.max_length is not None or rule.pattern is not None:
         # Text-shaped checks (length, denylist pattern) must run against
@@ -518,10 +547,20 @@ class PolicyEngine:
     `audit_logger`, if given, gets every decision — ALLOW, DENY, and
     NEEDS_APPROVAL alike (INV-10/INV-11's "shadow logging": allowed calls
     are logged too, not just denials). `latency_ns` measures only this
-    method's own `evaluate_call` + session-history work, not the
-    interceptor's argument handling or the tool's own execution time —
-    consistent with Phase 7's evaluation harness wanting the firewall's
-    overhead specifically, not the whole call's wall-clock time.
+    method's own `evaluate_call` + session-history + anomaly-detection
+    work, not the interceptor's argument handling or the tool's own
+    execution time — consistent with Phase 7's evaluation harness wanting
+    the firewall's overhead specifically, not the whole call's wall-clock
+    time.
+
+    `enable_anomaly_detection`, if `True` (default `False`), runs
+    `firewall.anomaly.detect_anomalies` after `evaluate_call` and folds
+    any findings into the decision via `apply_anomaly_findings` — see
+    ADR 0013. Opt-in and requires `session_store` (three of the four
+    detectors need real session history/declared-tools state; without a
+    `session_store` those three would always see empty inputs and never
+    fire, which is misleading enough to refuse outright rather than
+    silently do nothing).
     """
 
     def __init__(
@@ -529,10 +568,18 @@ class PolicyEngine:
         loaded: LoadedPolicySet,
         session_store: SessionStore | None = None,
         audit_logger: AuditLogger | None = None,
+        enable_anomaly_detection: bool = False,
     ) -> None:
+        if enable_anomaly_detection and session_store is None:
+            raise ValueError(
+                "enable_anomaly_detection=True requires a session_store — "
+                "most detectors need real session history/declared-tools "
+                "state and would silently never fire without one"
+            )
         self.loaded = loaded
         self.session_store = session_store
         self.audit_logger = audit_logger
+        self._anomaly_detection_enabled = enable_anomaly_detection
 
     def evaluate(self, call: CallRecord) -> Decision:
         start_ns = time.perf_counter_ns()
@@ -542,6 +589,14 @@ class PolicyEngine:
             else ()
         )
         decision = evaluate_call(call, self.loaded, session_history=history)
+
+        if self._anomaly_detection_enabled and self.session_store is not None:
+            declared_tools = self.session_store.get_declared_tools(call.session_id)
+            findings = detect_anomalies(
+                call, session_history=history, declared_tools=declared_tools
+            )
+            decision = apply_anomaly_findings(decision, findings)
+
         latency_ns = time.perf_counter_ns() - start_ns
 
         if self.session_store is not None and decision.outcome == Outcome.ALLOW:

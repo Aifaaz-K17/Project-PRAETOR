@@ -22,6 +22,11 @@ runtime timeout that denies the call if exceeded (INV-09) — see
 [[0010-policy-integrity-and-loading]]. `parameter_bounds` text checks
 (`max_length`/`pattern`) run against `canonical_text()`-normalized values,
 never raw text (INV-06) — a real bug found by code review and fixed.
+`min`/`max` numeric checks coerce a numeric-looking `str` (the shape a
+real LLM tool-call can emit) via `_coerce_numeric` before comparing, and
+fail closed on anything else unparseable — a real bypass (`amount:
+"999999"` sailing past a `max: 1000` rule) found and fixed in
+[[0014-phase4-security-review-findings]].
 
 Before any rule votes, `_check_unknown_parameters` enforces INV-08's
 "unknown parameter → DENY": a `parameter_schema` rule declares a tool's
@@ -48,16 +53,24 @@ corpus exists for Phase 7's false-positive-rate metric.
 
 **Phase 3 scope limit, closed in Phase 4:** `sequence` and `rate` rules
 need real session call history; `PolicyEngine.evaluate()` used to always
-supply it as empty. `firewall/session.py`'s `SessionStore` now backs it —
-`PolicyEngine` records each ALLOWed call and reads real prior-call history
-back into `evaluate_call` on every subsequent call in the same session.
+supply it as empty. [[session-state-and-audit-trail]]'s `SessionStore`
+now backs it — `PolicyEngine` records each ALLOWed call and reads real
+prior-call history back into `evaluate_call` on every subsequent call in
+the same session. The same `PolicyEngine.evaluate()` also optionally
+shadow-logs every decision via `AuditLogger` and, if
+`enable_anomaly_detection=True`, runs
+[[anomaly-detection]]'s four detectors after `evaluate_call` and folds
+any findings into the returned `Decision` — a second, separate
+deterministic layer, not a change to conflict resolution itself.
 
 ## Depends on
 - [[interception-layer]] — Receives tool calls from the wrapper.
 - [[canonicalization]] — Every path/host/email/text match calls `canonical_*` directly inside the rule matcher, never on raw arguments (INV-06).
+- [[session-state-and-audit-trail]] — Real session history for `sequence`/`rate` rules; shadow logging of every decision.
 
 ## Used by
 - [[action-firewall]] — Primary decision engine.
+- [[anomaly-detection]] — Runs after and folds into `evaluate_call`'s `Decision`.
 
 ## Key decisions
 - [[0003-policy-engine-deployment-mode]]
@@ -67,3 +80,5 @@ back into `evaluate_call` on every subsequent call in the same session.
 - [[0010-policy-integrity-and-loading]] — Load-once hashing, frozen structures, ReDoS linting + runtime timeout.
 - [[0011-unknown-parameter-enforcement]] — `parameter_schema` rule type; opt-in per tool, and why a blanket check was rejected.
 - [[0012-rbac-composition-with-allowlist-rules]] — RBAC-bypass bug via unconditional path_scope/domain_allowlist ALLOW votes; `roles` field fix.
+- [[0013-rule-based-anomaly-detection]] — Second deterministic layer catching multi-call context, not single-call rule violations.
+- [[0014-phase4-security-review-findings]] — numeric-string bypass fix for `min`/`max` bounds; two more RBAC-composition-bypass instances found and fixed; a structural guard test against a fourth.

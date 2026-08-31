@@ -14,6 +14,8 @@ Welcome to the living architecture and knowledge vault for the **Deterministic A
 - [[interception-layer]] — Technical mechanics of intercepting LangChain tool calls before execution.
 - [[canonicalization]] — Normalizing paths/hosts/emails/text before policy evaluation (INV-06).
 - [[policy-engine]] — Policy schema specification, evaluator, parameter bounds, RBAC, and state sequence enforcement.
+- [[session-state-and-audit-trail]] — Per-session call history (`SessionStore`) and the hash-chained, redacted audit log (`AuditLogger`).
+- [[anomaly-detection]] — Second deterministic layer catching multi-call attack shapes a single-call policy rule can't see.
 
 ---
 
@@ -29,6 +31,8 @@ Welcome to the living architecture and knowledge vault for the **Deterministic A
 - [[0010-policy-integrity-and-loading]] — Load-once SHA-256 hashing, frozen structures, ReDoS static linting + runtime timeout (verified against a real hanging pattern).
 - [[0011-unknown-parameter-enforcement]] — parameter_schema rule type closing the "unknown parameter → DENY" gap in INV-08; opt-in per tool, and why.
 - [[0012-rbac-composition-with-allowlist-rules]] — real RBAC-bypass bug found via testing: unconditional path_scope/domain_allowlist ALLOW votes were outvoting rbac restrictions on the same tool; fixed with an opt-in `roles` field.
+- [[0013-rule-based-anomaly-detection]] — four pure-function detectors (call volume, tool-outside-declared-set, high-risk sequence, argument entropy) folded into a policy Decision; opt-in, requires a `session_store`.
+- [[0014-phase4-security-review-findings]] — pre-Phase-5 review pass: a numeric-string type-confusion bypass in parameter_bounds min/max, two more instances of ADR 0012's RBAC-composition bug, and the structural guard test ADR 0012 named as a follow-up, now built.
 
 ---
 

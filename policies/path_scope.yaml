@@ -32,4 +32,19 @@ rules:
     action: allow
     parameter: attachment_path
     allowed_roots: ["sandbox"]
-    description: A drafted email's attachment must come from inside sandbox/.
+    roles: ["analyst", "finance", "admin"]
+    description: >
+      A drafted email's attachment must come from inside sandbox/, and
+      only for analyst-and-above roles — matching
+      rbac-compose-draft-analysts. Without this roles list, a role with
+      NO compose_draft RBAC grant at all (e.g. a bare "guest") could
+      still compose a draft with an in-scope attachment: this rule's own
+      ALLOW vote was independently sufficient regardless of role. This is
+      the exact bug class ADR 0012 fixed for path-read-file-sandbox and
+      domain-send-email-corp, found there via testing but missed on this
+      third rule at the time — found and fixed 2026-09-01 (ADR 0014).
+      Deliberately does NOT include "intern": intern's own RBAC vote
+      (rbac-compose-draft-intern-needs-approval) is requires_approval,
+      and leaving intern out of this rule's roles means it casts no
+      competing plain-ALLOW vote for that role, so NEEDS_APPROVAL still
+      correctly wins for an intern's in-scope attachment.

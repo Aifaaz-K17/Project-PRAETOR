@@ -10,6 +10,8 @@ A deterministic proxy/middleware security layer that sits between an LLM agent's
 ## Depends on
 - [[interception-layer]] — Invokes policy evaluation prior to tool execution.
 - [[policy-engine]] — Evaluates tool parameters against explicit rules.
+- [[session-state-and-audit-trail]] — Per-session history and the tamper-evident record of every decision.
+- [[anomaly-detection]] — Second deterministic layer catching multi-call attack shapes.
 
 ## Used by
 - [[demo-agent]] — Standard defensive wrapper around LLM tools.

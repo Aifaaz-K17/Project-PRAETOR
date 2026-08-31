@@ -43,4 +43,17 @@ rules:
     action: allow
     parameter: target_host
     allowed_domains: ["wikipedia.org", "docs.python.org", "github.com"]
-    description: search_web's mocked fetch is scoped to a small reference-site allowlist.
+    roles: ["intern", "analyst", "finance", "admin"]
+    description: >
+      search_web's mocked fetch is scoped to a small reference-site
+      allowlist, matching rbac-search-web-everyone's role list exactly —
+      that rule's name says "everyone" but it is still a specific,
+      enumerated role list (INV-08 is a closed-world allowlist, not an
+      open one), and without this `roles` field, an unrecognized or
+      unexpected role string not among those four (e.g. a typo, or a
+      role a future rbac.yaml simply forgot to add here) would still
+      reach search_web freely, because this rule's own ALLOW vote does
+      not check role at all. A third real instance of the exact bug
+      class ADR 0012 fixed on two other rules and ADR 0014 found on a
+      third (path-compose-draft-attachment-sandbox) — found and fixed
+      alongside it, 2026-09-01.

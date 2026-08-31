@@ -3,16 +3,25 @@
 Walks every row in the audit database in order, recomputes each entry's
 SHA-256 over its canonical JSON, and confirms it matches the stored
 `entry_hash` and that `prev_hash` matches the previous row's `entry_hash`.
-Any mismatch means a row was edited or deleted after the fact.
+Any mismatch means a row was edited, deleted, or reordered after the fact.
 
-STATUS: stub. The audit logger (firewall/logger, INV-10/INV-11) does not
-exist yet, so there is no schema to read. This script intentionally exits
-non-zero rather than pretending to verify anything — a firewall tool that
-silently no-ops on missing dependencies violates fail-closed (INV-01).
+The actual walk-and-recompute logic lives in `firewall.logger.verify_chain`
+(shared with `tests/test_logger.py`, which proves it against a deliberately
+tampered database) — this script is a thin CLI wrapper around it, printing
+a report and setting the process exit code, matching the pattern
+`scripts/verify_policies.py` already uses.
 """
 
 import argparse
 import sys
+from pathlib import Path
+
+# Run standalone (`python scripts/verify_chain.py`), not as a package — put
+# the repo root on sys.path so `import firewall...` resolves regardless of
+# the caller's current directory.
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+from firewall.logger import verify_chain
 
 
 def main() -> int:
@@ -24,11 +33,15 @@ def main() -> int:
     )
     args = parser.parse_args()
 
-    print(
-        f"verify_chain.py: not yet implemented — firewall/logger does not "
-        f"exist. Cannot verify {args.db}.",
-        file=sys.stderr,
-    )
+    result = verify_chain(args.db)
+
+    if result.ok:
+        print(f"OK: {args.db} — {result.rows_checked} row(s), hash chain intact.")
+        return 0
+
+    print(f"TAMPERED: {args.db}", file=sys.stderr)
+    print(f"  Rows checked before the break: {result.rows_checked}", file=sys.stderr)
+    print(f"  {result.first_break}", file=sys.stderr)
     return 1
 
 
