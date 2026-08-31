@@ -22,8 +22,8 @@
 **Revert:** `git revert 16c8f58` (note: this is a merge commit; reverting needs `-m 1`)
 
 ## 2026-08-31 — Phase 1: Interception Layer (Total Mediation)
-**Commit:** (pending — see PROGRESS.md)
+**Commit:** `d30f7e0`
 **Changed:** `firewall/context.py` (contextvars-based `Principal` binding, INV-05); `firewall/interceptor.py` (`CallRecord`, `Decision`, `Evaluator` protocol, `ToolCallDenied`, `GuardedTool`, `GuardedToolRegistry`, `firewall_guard` decorator, single fail-closed/TOCTOU-safe `_evaluate_call` chokepoint); `tests/_evaluators.py` (test-double evaluators); `tests/test_context.py` + `tests/test_interceptor.py` (35 tests, incl. the INV-02 bypass-audit headline test and two honest negative tests documenting the R-1 residual bypass); `demo_agent/interception_demo.py`; ADR `0007-interceptor-enforcement-point`. Also found and fixed a real bug in the Phase 0 INV-14 fixture: blocking `socket.socket` itself broke every async test on Windows (`ProactorEventLoop`'s self-pipe needs a real loopback socket pair) — fixed by blocking only non-loopback `connect`/`connect_ex`.
 **Why:** Phase 1 deliverable per the detailed build prompt — total mediation (INV-02) is "the single claim the whole project rests on" (CLAUDE.md §2), so it needed to be provably true via one shared chokepoint and one comprehensive bypass-audit test, not asserted per-path.
 **Files:** `firewall/context.py`, `firewall/interceptor.py`, `tests/_evaluators.py`, `tests/test_context.py`, `tests/test_interceptor.py`, `tests/test_offline_enforcement.py` (INV-14 fixture fix), `conftest.py` (INV-14 fixture fix), `demo_agent/interception_demo.py`, `docs/knowledge/decisions/0007-interceptor-enforcement-point.md`, `docs/knowledge/concepts/interception-layer.md`, `docs/knowledge/index.md`, `LIMITATIONS.md`, `PROGRESS.md`
-**Revert:** `git revert <hash>` (once committed)
+**Revert:** `git revert d30f7e0`
