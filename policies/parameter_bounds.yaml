@@ -35,6 +35,18 @@ rules:
     description: A transfer memo over 200 characters is denied.
 
   - type: parameter_bounds
+    id: bounds-transfer-note-suspicious-pattern
+    tool: transfer_funds
+    action: deny
+    parameter: note
+    pattern: "(?i)password reset|urgent wire transfer|social security number|bypass firewall|exfiltrate data"
+    description: >
+      A transfer memo matching a common social-engineering or
+      exfiltration phrase is denied — note previously only had a length
+      cap, no content check, unlike its query/subject siblings below
+      (found by code review).
+
+  - type: parameter_bounds
     id: bounds-search-query-length
     tool: search_web
     action: deny
