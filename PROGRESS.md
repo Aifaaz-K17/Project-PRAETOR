@@ -273,7 +273,7 @@ engine ever sees a raw argument.
   for an analogous gap against `sequence`/`rate` rules.
 
 ### [x] PHASE 5 — HITL Approval
-- **Completed**: 2026-09-01 · **Commit**: pending (staged locally).
+- **Completed**: 2026-09-01 · **Commit**: `aca15b7`.
 - `firewall/hitl.py`: `sanitize_for_display` (strips ANSI/CR/LF,
   truncates, quotes — INV-12); `HitlChannel` protocol + real
   `CliApprovalChannel` (blocking terminal `y/n`, reader-thread + bounded
@@ -358,8 +358,6 @@ engine ever sees a raw argument.
   above. Part 2, plus the pre-Phase-5 security review, committed as
   `1bcc6d3`.
 - Phase 5 verification commands all actually run — see command list
-  above. Staged locally, not yet committed — per CLAUDE.md §3's
-  phase-gating rule, work stops at "phase done, summarized" and waits
-  for explicit confirmation before committing.
+  above. Committed as `aca15b7`.
 - Ready to proceed to Phase 6 (Dashboard + Integration + Attack
   Scenarios) upon confirmation.
