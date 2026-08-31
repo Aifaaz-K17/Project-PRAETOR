@@ -12,9 +12,11 @@ import yaml
 from hypothesis import given, settings
 from hypothesis import strategies as st
 from pydantic import ValidationError
+from sqlalchemy import select
 
 from firewall.canonicalize import canonical_path
 from firewall.interceptor import CallRecord, Outcome
+from firewall.logger import AuditLogger, AuditLogRow
 from firewall.policy_engine import (
     MAX_ARG_COUNT,
     MAX_NESTING_DEPTH,
@@ -34,6 +36,7 @@ from firewall.policy_schema import (
     RbacRule,
     RuleAction,
 )
+from firewall.session import SessionStore
 
 REAL_POLICY_DIR = Path(__file__).parent.parent / "policies"
 BENIGN_CALLS_PATH = Path(__file__).parent / "fixtures" / "benign_calls.yaml"
@@ -41,6 +44,7 @@ BENIGN_CALLS_PATH = Path(__file__).parent / "fixtures" / "benign_calls.yaml"
 
 def make_call(
     *,
+    call_id: str = "test-call",
     tool_name: str = "read_file",
     role: str = "analyst",
     args: dict | None = None,
@@ -51,7 +55,7 @@ def make_call(
 ) -> CallRecord:
     args = args if args is not None else {}
     return CallRecord(
-        call_id="test-call",
+        call_id=call_id,
         tool_name=tool_name,
         raw_args=args,
         canonical_args=dict(args),
@@ -675,6 +679,27 @@ def test_policy_path_compose_draft_attachment_sandbox() -> None:
     assert bad.outcome == Outcome.DENY
 
 
+def test_INV_05_policy_path_scope_roles_compose_with_rbac_not_bypass_it() -> None:
+    """Real bug found via testing (Phase 4): path_scope rules used to be
+    unconditional ALLOW grants regardless of role, so an intern with no
+    RBAC grant for read_file could still read any in-scope file — the
+    path_scope rule's own ALLOW vote was independently sufficient under
+    conflict resolution's "any matching ALLOW wins" rule, silently
+    bypassing rbac-read-file-analysts rather than composing with it. Fixed
+    by adding an optional `roles` field to PathScopeRule, populated on the
+    shipped path-read-file-sandbox rule (see ADR 0012)."""
+    loaded = _load_single_real_rule("path-read-file-sandbox")
+    intern_call = make_call(
+        tool_name="read_file", role="intern", args={"path": "notes.txt"}
+    )
+    assert evaluate_call(intern_call, loaded).outcome == Outcome.DENY
+
+    analyst_call = make_call(
+        tool_name="read_file", role="analyst", args={"path": "notes.txt"}
+    )
+    assert evaluate_call(analyst_call, loaded).outcome == Outcome.ALLOW
+
+
 def test_INV_06_policy_path_scope_allowed_root_independent_of_cwd(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -708,6 +733,25 @@ def test_policy_domain_send_email_corp_does_not_match_other_domain() -> None:
         make_call(tool_name="send_email", args={"to": "alice@evil.com"}), loaded
     )
     assert decision.outcome == Outcome.DENY
+
+
+def test_INV_05_policy_domain_allowlist_roles_compose_with_rbac_not_bypass_it() -> None:
+    """Same real bug as path_scope's (see the path_scope regression test
+    above and ADR 0012), for domain_allowlist: an intern with no RBAC
+    grant for send_email could still send to the corp domain once the
+    sequence gate was satisfied, because domain-send-email-corp's ALLOW
+    vote was independently sufficient regardless of role. Fixed by adding
+    an optional `roles` field, populated on the shipped rule."""
+    loaded = _load_single_real_rule("domain-send-email-corp")
+    intern_call = make_call(
+        tool_name="send_email", role="intern", args={"to": "alice@corp.example.com"}
+    )
+    assert evaluate_call(intern_call, loaded).outcome == Outcome.DENY
+
+    analyst_call = make_call(
+        tool_name="send_email", role="analyst", args={"to": "alice@corp.example.com"}
+    )
+    assert evaluate_call(analyst_call, loaded).outcome == Outcome.ALLOW
 
 
 def test_policy_domain_send_email_partner_needs_approval() -> None:
@@ -1208,11 +1252,12 @@ def test_policy_engine_satisfies_evaluator_protocol() -> None:
     assert decision.outcome == Outcome.ALLOW
 
 
-def test_policy_engine_evaluates_against_empty_session_history() -> None:
-    """Documents the current, honest Phase 3 scope: PolicyEngine.evaluate()
-    always uses an empty history, so a sequence-gated tool is denied even
-    with a "legitimate" prior call, until Phase 4 wires up real session
-    tracking (LIMITATIONS.md)."""
+def test_policy_engine_without_a_session_store_uses_empty_history() -> None:
+    """Without a session_store (the default — this was PolicyEngine's only
+    behavior through Phase 3), evaluate() always uses an empty history, so
+    a sequence-gated tool is denied even with a "legitimate" prior call.
+    Still real, tested, fail-closed-correct behavior for a caller that
+    hasn't wired up session tracking — not a removed feature."""
     loaded = load_policy_set(REAL_POLICY_DIR)
     engine = PolicyEngine(loaded)
     decision = engine.evaluate(
@@ -1222,3 +1267,106 @@ def test_policy_engine_evaluates_against_empty_session_history() -> None:
     )
     assert decision.outcome == Outcome.DENY
     assert decision.rule_id == "sequence-send-email-requires-draft"
+
+
+def test_INV_08_policy_engine_with_session_store_records_only_allowed_calls() -> None:
+    """The Phase 4 integration: PolicyEngine records a call into the
+    session store only when it was actually ALLOWED — a denied call must
+    never count as "this happened" for a later sequence rule."""
+    loaded = load_policy_set(REAL_POLICY_DIR)
+    store = SessionStore()
+    engine = PolicyEngine(loaded, session_store=store)
+
+    denied = engine.evaluate(
+        make_call(
+            tool_name="send_email",
+            role="analyst",
+            session_id="s1",
+            args={"to": "a@corp.example.com"},
+        )
+    )
+    assert denied.outcome == Outcome.DENY
+    assert store.get_history("s1") == ()  # the denied attempt was not recorded
+
+    allowed = engine.evaluate(
+        make_call(
+            tool_name="read_file",
+            role="analyst",
+            session_id="s1",
+            args={"path": "notes.txt"},
+        )
+    )
+    assert allowed.outcome == Outcome.ALLOW
+    assert [tool for tool, _ in store.get_history("s1")] == ["read_file"]
+
+
+def test_INV_08_policy_engine_with_session_store_closes_the_sequence_gap() -> None:
+    """The real, end-to-end proof: the sequence gate that was permanently
+    denied through Phase 3 (see the test above) now correctly opens once
+    the prerequisite tool has actually been allowed in the same session —
+    exactly what firewall/session.py exists to make possible."""
+    loaded = load_policy_set(REAL_POLICY_DIR)
+    store = SessionStore()
+    engine = PolicyEngine(loaded, session_store=store)
+
+    draft = engine.evaluate(
+        make_call(
+            tool_name="compose_draft",
+            role="analyst",
+            session_id="s1",
+            args={"subject": "s", "body": "b", "attachment_path": "sandbox/notes.txt"},
+        )
+    )
+    assert draft.outcome == Outcome.ALLOW
+
+    send = engine.evaluate(
+        make_call(
+            tool_name="send_email",
+            role="analyst",
+            session_id="s1",
+            args={"to": "a@corp.example.com"},
+        )
+    )
+    assert send.outcome == Outcome.ALLOW
+    assert send.rule_id != "sequence-send-email-requires-draft"
+
+
+def test_INV_10_policy_engine_with_audit_logger_shadow_logs_every_decision(
+    tmp_path: Path,
+) -> None:
+    """INV-10/INV-11's "shadow logging": every decision gets a row, ALLOW
+    included, not just denials."""
+    loaded = load_policy_set(REAL_POLICY_DIR)
+    with AuditLogger(
+        tmp_path / "audit.db", policy_set_hash=loaded.policy_set_hash
+    ) as logger:
+        engine = PolicyEngine(loaded, audit_logger=logger)
+
+        engine.evaluate(
+            make_call(
+                call_id="c1",
+                tool_name="read_file",
+                role="analyst",
+                args={"path": "notes.txt"},
+            )
+        )
+        engine.evaluate(
+            make_call(
+                call_id="c2",
+                tool_name="read_file",
+                role="intern",
+                args={"path": "notes.txt"},
+            )
+        )
+
+        with logger._session_factory() as session:
+            rows = (
+                session.execute(select(AuditLogRow).order_by(AuditLogRow.id))
+                .scalars()
+                .all()
+            )
+
+    assert len(rows) == 2
+    assert rows[0].outcome == "ALLOW"
+    assert rows[1].outcome == "DENY"
+    assert rows[1].prev_hash == rows[0].entry_hash

@@ -17,9 +17,10 @@ policy file this project ships uses as DENY.
 from __future__ import annotations
 
 import hashlib
+import time
 from collections.abc import Sequence
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import timedelta
 from pathlib import Path
 from typing import Any
 
@@ -34,7 +35,8 @@ from firewall.canonicalize import (
     canonical_text,
     matches_domain_allowlist,
 )
-from firewall.interceptor import CallRecord, Decision
+from firewall.interceptor import CallRecord, Decision, Outcome
+from firewall.logger import AuditLogger
 from firewall.policy_schema import (
     DomainAllowlistRule,
     ParameterBoundsRule,
@@ -47,6 +49,7 @@ from firewall.policy_schema import (
     RuleAction,
     SequenceRule,
 )
+from firewall.session import SessionHistoryEntry, SessionStore
 
 # --- INV-09: bounded evaluation ------------------------------------------
 
@@ -72,14 +75,6 @@ _REPO_ROOT = Path(__file__).resolve().parent.parent
 def _resolve_allowed_root(root: str) -> Path:
     root_path = Path(root)
     return root_path if root_path.is_absolute() else _REPO_ROOT / root_path
-
-
-# (tool_name, called_at_utc) — the minimal session history a sequence/rate
-# rule needs. Phase 4's firewall/session.py owns the real session store;
-# PolicyEngine.evaluate() (below) currently always passes an empty history,
-# which is the fail-closed-correct default until that's wired up — see
-# LIMITATIONS.md.
-SessionHistoryEntry = tuple[str, datetime]
 
 
 class PolicyLoadError(Exception):
@@ -348,6 +343,8 @@ def _matches_parameter_bounds(
 
 
 def _matches_path_scope(rule: PathScopeRule, call: CallRecord) -> bool:
+    if rule.roles and call.role not in rule.roles:
+        return False
     value = call.canonical_args.get(rule.parameter)
     if not isinstance(value, str):
         return False
@@ -356,6 +353,8 @@ def _matches_path_scope(rule: PathScopeRule, call: CallRecord) -> bool:
 
 
 def _matches_domain_allowlist(rule: DomainAllowlistRule, call: CallRecord) -> bool:
+    if rule.roles and call.role not in rule.roles:
+        return False
     value = call.canonical_args.get(rule.parameter)
     if not isinstance(value, str):
         return False
@@ -505,17 +504,54 @@ class PolicyEngine:
     typing — no inheritance needed). Wraps a `LoadedPolicySet` and can be
     handed straight to `GuardedToolRegistry(evaluator=...)`.
 
-    Session-history integration is a Phase 4 responsibility
-    (`firewall/session.py`, not built yet) — until that's wired up, this
-    always evaluates against an empty history. For sequence/rate rules
-    that means "no prior calls are known", which is the fail-closed-
-    correct default (a `sequence` rule requiring a prior `compose_draft`
-    call will deny `send_email` every time under this adapter, not
-    silently skip its own check) — see LIMITATIONS.md.
+    `session_store`, if given, is what makes `sequence`/`rate` rules
+    actually exercisable through the live interceptor (Phase 4,
+    `firewall/session.py`) — `evaluate()` reads that session's history
+    before deciding, and records the call into it afterward, but *only*
+    when the decision was ALLOW: a denied or needs-approval call never
+    happened as far as a later `sequence` rule is concerned, since it
+    never actually executed. Without a `session_store` (the default),
+    this behaves exactly as it did through Phase 3 — always an empty
+    history, the fail-closed-correct default for a session nothing is
+    tracking.
+
+    `audit_logger`, if given, gets every decision — ALLOW, DENY, and
+    NEEDS_APPROVAL alike (INV-10/INV-11's "shadow logging": allowed calls
+    are logged too, not just denials). `latency_ns` measures only this
+    method's own `evaluate_call` + session-history work, not the
+    interceptor's argument handling or the tool's own execution time —
+    consistent with Phase 7's evaluation harness wanting the firewall's
+    overhead specifically, not the whole call's wall-clock time.
     """
 
-    def __init__(self, loaded: LoadedPolicySet) -> None:
+    def __init__(
+        self,
+        loaded: LoadedPolicySet,
+        session_store: SessionStore | None = None,
+        audit_logger: AuditLogger | None = None,
+    ) -> None:
         self.loaded = loaded
+        self.session_store = session_store
+        self.audit_logger = audit_logger
 
     def evaluate(self, call: CallRecord) -> Decision:
-        return evaluate_call(call, self.loaded, session_history=())
+        start_ns = time.perf_counter_ns()
+        history = (
+            self.session_store.get_history(call.session_id)
+            if self.session_store is not None
+            else ()
+        )
+        decision = evaluate_call(call, self.loaded, session_history=history)
+        latency_ns = time.perf_counter_ns() - start_ns
+
+        if self.session_store is not None and decision.outcome == Outcome.ALLOW:
+            self.session_store.record_call(
+                call.session_id, call.tool_name, call.timestamp_utc
+            )
+
+        if self.audit_logger is not None:
+            self.audit_logger.log_call(
+                call=call, decision=decision, latency_ns=latency_ns
+            )
+
+        return decision

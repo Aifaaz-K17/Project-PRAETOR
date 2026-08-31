@@ -98,12 +98,30 @@ class PathScopeRule(_BaseRule):
     type: Literal["path_scope"]
     parameter: str = Field(min_length=1)
     allowed_roots: tuple[str, ...] = Field(min_length=1)
+    roles: tuple[str, ...] = Field(
+        default_factory=tuple,
+        description=(
+            "Optional: restrict this grant to these roles. Empty (the "
+            "default) means unrestricted by role — see ADR 0012 for why "
+            "that default is dangerous whenever an rbac rule elsewhere "
+            "means to gate the same tool: an unrestricted path_scope "
+            "rule independently grants ALLOW regardless of role, which "
+            "bypasses an rbac rule's restriction rather than composing "
+            "with it (conflict resolution treats every matching ALLOW "
+            "vote as sufficient on its own, not as one of several "
+            "conditions that must all hold)."
+        ),
+    )
 
 
 class DomainAllowlistRule(_BaseRule):
     type: Literal["domain_allowlist"]
     parameter: str = Field(min_length=1)
     allowed_domains: tuple[str, ...] = Field(min_length=1)
+    roles: tuple[str, ...] = Field(
+        default_factory=tuple,
+        description="Optional: restrict this grant to these roles. Empty means unrestricted by role — see ADR 0012.",
+    )
 
 
 class SequenceRule(_BaseRule):

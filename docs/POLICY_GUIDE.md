@@ -54,6 +54,7 @@ Every rule shares these fields:
   action: allow
   parameter: path
   allowed_roots: ["sandbox"]
+  roles: ["analyst", "finance", "admin"]   # optional — see below
 ```
 
 Matches when `args[parameter]`, canonicalized via
@@ -65,6 +66,16 @@ canonicalization outright (a NUL byte, a UNC path, a percent-encoding
 trick), simply doesn't match — it never gets an explicit "deny", it just
 never gets an "allow" either, and falls through to `default_action`.
 
+`roles` is optional and defaults to empty, meaning unrestricted by role.
+**Read this before pairing a `path_scope` rule with an `rbac` rule on the
+same tool:** conflict resolution treats every matching ALLOW vote as
+independently sufficient (not an AND across all matching rules — see
+"Which way should `action` point?" below), so an unrestricted `path_scope`
+rule does not *narrow* an `rbac` rule's role restriction, it silently
+outvotes it. If a tool is meant to be role-restricted, set `roles` here to
+the same list as its `rbac` rule. This was a real, shipped bug — see ADR
+0012 — fixed on `path-read-file-sandbox` above.
+
 ### `domain_allowlist` — is this host or email address on the list?
 
 ```yaml
@@ -74,6 +85,7 @@ never gets an "allow" either, and falls through to `default_action`.
   action: allow
   parameter: to
   allowed_domains: ["corp.example.com"]
+  roles: ["analyst", "finance", "admin"]   # optional — same caveat as path_scope, above
 ```
 
 Matches when `args[parameter]` — a bare hostname, **or** an email address
@@ -82,7 +94,8 @@ the domain from `canonical_email` if that fails) — is exactly one of
 `allowed_domains`, or a proper subdomain of one (`mail.corp.example.com`
 matches `corp.example.com`; `notcorp.example.com` and
 `corp.example.com.attacker.net` never do — label-boundary matching, ADR
-0008).
+0008). `roles` behaves exactly as documented under `path_scope` above —
+same optional field, same ADR 0012 rationale.
 
 ### `parameter_bounds` — does a value violate a limit?
 
@@ -129,13 +142,11 @@ Matches (and so blocks) when **any** tool named in `requires_prior_tools`
 has *not* yet appeared earlier in the session's call history. This is a
 gate, not an allowlist — see "Which way should `action` point?".
 
-> **Phase 3 scope note:** the live interceptor currently evaluates every
-> call against an *empty* session history (Phase 4's `firewall/session.py`
-> — the real session store — doesn't exist yet). That means a
-> `sequence` rule denies every call to its gated tool right now, even a
-> genuinely legitimate one, until Phase 4 wires up real history tracking.
-> The rule logic itself is fully implemented and tested directly (see
-> `tests/test_policy_engine.py`) — see `LIMITATIONS.md`.
+> **Resolved in Phase 4:** the live interceptor now evaluates every call
+> against real session history, backed by `firewall/session.py`'s
+> `SessionStore` and wired into `PolicyEngine.evaluate()`. A `sequence`
+> rule correctly allows a call once its `requires_prior_tools` have really
+> happened earlier in that session.
 
 ### `rate` — too many calls, too fast?
 
@@ -149,8 +160,8 @@ gate, not an allowlist — see "Which way should `action` point?".
 ```
 
 Matches when this call would push the count of same-tool calls within the
-last `window_seconds` to or past `max_calls`. Same Phase 3 scope note as
-`sequence` applies — needs real session history.
+last `window_seconds` to or past `max_calls`. Same Phase 4 resolution note
+as `sequence` applies — backed by real session history.
 
 ### `parameter_schema` — is every argument on this call expected at all?
 

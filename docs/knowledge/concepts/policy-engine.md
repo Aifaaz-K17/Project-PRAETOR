@@ -29,17 +29,28 @@ complete accepted parameter set, and any call carrying an undeclared
 argument is denied outright, opt-in per tool — see
 [[0011-unknown-parameter-enforcement]].
 
+`path_scope` and `domain_allowlist` rules carry an optional `roles` field
+(empty = unrestricted, the default). This exists because these rules are
+independent ALLOW votes under conflict resolution — an unrestricted one
+does not narrow a co-located `rbac` rule's role restriction on the same
+tool, it silently outvotes it. This was a real bug (an intern could read
+any in-scope file / email the corp domain despite no RBAC grant), found
+via testing in Phase 4 and fixed by setting `roles` on the two affected
+shipped rules to match their sibling `rbac` rule — see
+[[0012-rbac-composition-with-allowlist-rules]] for the full incident and
+why the fix is opt-in rather than automatic.
+
 29 rules ship across `policies/*.yaml` (path traversal, domain allowlists,
 transfer bounds, RBAC scoping, one sequence gate, five rate limits, five
 parameter schemas), each with at least one isolated test in
 `tests/test_policy_engine.py`. A 70-entry `tests/fixtures/benign_calls.yaml`
 corpus exists for Phase 7's false-positive-rate metric.
 
-**Known Phase 3 scope limit** (see LIMITATIONS.md): `sequence` and `rate`
-rules need real session call history, which `PolicyEngine.evaluate()`
-currently always supplies as empty — Phase 4's `firewall/session.py` will
-wire up the real session store. The rule logic itself is fully
-implemented and tested directly against constructed history.
+**Phase 3 scope limit, closed in Phase 4:** `sequence` and `rate` rules
+need real session call history; `PolicyEngine.evaluate()` used to always
+supply it as empty. `firewall/session.py`'s `SessionStore` now backs it —
+`PolicyEngine` records each ALLOWed call and reads real prior-call history
+back into `evaluate_call` on every subsequent call in the same session.
 
 ## Depends on
 - [[interception-layer]] — Receives tool calls from the wrapper.
@@ -55,3 +66,4 @@ implemented and tested directly against constructed history.
 - [[0009-policy-conflict-resolution]] — DENY > NEEDS_APPROVAL > ALLOW > default; why gate-shaped rules are `action: deny`.
 - [[0010-policy-integrity-and-loading]] — Load-once hashing, frozen structures, ReDoS linting + runtime timeout.
 - [[0011-unknown-parameter-enforcement]] — `parameter_schema` rule type; opt-in per tool, and why a blanket check was rejected.
+- [[0012-rbac-composition-with-allowlist-rules]] — RBAC-bypass bug via unconditional path_scope/domain_allowlist ALLOW votes; `roles` field fix.

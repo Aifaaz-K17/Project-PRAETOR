@@ -28,6 +28,7 @@ Welcome to the living architecture and knowledge vault for the **Deterministic A
 - [[0009-policy-conflict-resolution]] — DENY > NEEDS_APPROVAL > ALLOW > default; why gate-shaped rules must be action: deny.
 - [[0010-policy-integrity-and-loading]] — Load-once SHA-256 hashing, frozen structures, ReDoS static linting + runtime timeout (verified against a real hanging pattern).
 - [[0011-unknown-parameter-enforcement]] — parameter_schema rule type closing the "unknown parameter → DENY" gap in INV-08; opt-in per tool, and why.
+- [[0012-rbac-composition-with-allowlist-rules]] — real RBAC-bypass bug found via testing: unconditional path_scope/domain_allowlist ALLOW votes were outvoting rbac restrictions on the same tool; fixed with an opt-in `roles` field.
 
 ---
 

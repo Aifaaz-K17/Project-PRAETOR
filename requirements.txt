@@ -21,6 +21,10 @@ idna==3.18
 # INV-09 (ReDoS protection) requires.
 regex==2026.8.31
 
+# Audit trail (firewall/logger.py) — SQLite via the ORM/Core toolkit,
+# WAL mode so the dashboard can read while the firewall writes.
+sqlalchemy==2.0.52
+
 # Web API & Dashboard
 fastapi==0.141.1
 uvicorn==0.52.2

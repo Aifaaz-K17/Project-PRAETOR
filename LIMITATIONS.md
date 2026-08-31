@@ -250,24 +250,14 @@ commit details.
   the engine — setting `requires_approval: true` on one does nothing, and
   nothing currently validates against that footgun.
 
-- **`sequence` and `rate` rules need real session call history, which
-  doesn't exist yet.** `PolicyEngine.evaluate()` — the adapter the live
-  interceptor actually calls — always evaluates against an *empty*
-  session history, because Phase 4's `firewall/session.py` (the real
-  session store) hasn't been built. Concretely, this means
-  `policies/sequence.yaml`'s `send_email` gate denies *every* call to
-  `send_email` through the live interceptor right now, even one correctly
-  preceded by `compose_draft` in the same real session — because nothing
-  is currently tracking that a prior call happened at all. This is
-  fail-closed-correct (an unknown history is treated as "nothing has
-  happened yet", never as "assume it's fine"), but it does mean these two
-  rule *types* are fully implemented and tested (against
-  directly-constructed session history in `tests/test_policy_engine.py`)
-  without yet being exercisable end-to-end through a real multi-call
-  session. `demo_agent/interception_demo.py` (Phase 1) does not use the
-  real policy engine yet, so this gap isn't visible there either — it will
-  become visible, and need fixing, when Phase 6 builds a real multi-step
-  demo scenario.
+- ~~`sequence` and `rate` rules need real session call history, which
+  doesn't exist yet~~ — **resolved in Phase 4**: `firewall/session.py`'s
+  `SessionStore` now backs `PolicyEngine.evaluate()`, which records every
+  ALLOWed call and passes real prior-call history into `evaluate_call` on
+  every subsequent call in the same session. See the Phase 4 section
+  below. `demo_agent/interception_demo.py` (Phase 1) still does not wire
+  up the real policy engine, so this fix isn't visible there — that's a
+  Phase 6 demo-scenario task, not a policy-engine gap.
 - `canonical_email`'s bare-hostname-only limitation (noted in Phase 2)
   means a `domain_allowlist` rule's email fallback also can't match an
   IP-literal-in-brackets email domain — same narrow, honest gap, now
@@ -295,3 +285,53 @@ commit details.
   test actually exercises the rule meaningfully — a rule id that merely
   appears in a comment would pass it. Cheap insurance against a forgotten
   test, not a substitute for reviewing new tests by hand.
+
+## Phase 4 — Session State, Audit Trail, Anomaly Detection (in progress)
+
+### RBAC-bypass bug, found via testing (2026-08-31)
+
+**Fixed.** `path_scope` and `domain_allowlist` rules were written as
+unconditional `action: allow` grants matching any role. Because conflict
+resolution treats every matching ALLOW-type rule's vote as independently
+sufficient (not an AND across all matching rules), an unrestricted
+`path_scope`/`domain_allowlist` rule silently outvoted a co-located `rbac`
+rule's role restriction on the same tool rather than composing with it.
+Concretely: an `intern` (no RBAC grant for `read_file` or `send_email`)
+could still read any file inside `sandbox/` and email the corp domain,
+because `path-read-file-sandbox` and `domain-send-email-corp` voted ALLOW
+for any role. `transfer_funds` was confirmed not vulnerable (no
+`path_scope`/`domain_allowlist` rule exists for it). `compose_draft` was
+confirmed not exploitable *today* only because its `requires_approval`
+gate already outranks a plain ALLOW in conflict resolution — coincidental
+to that tool's current rule shape, not a structural protection.
+
+Fixed by adding an optional `roles: tuple[str, ...]` field to both rule
+types (empty = unrestricted, unchanged default) and populating it on the
+two affected shipped rules to match their sibling `rbac` rule's role list.
+See ADR
+[`0012-rbac-composition-with-allowlist-rules`](docs/knowledge/decisions/0012-rbac-composition-with-allowlist-rules.md)
+for the full incident. New tests:
+`test_INV_05_policy_path_scope_roles_compose_with_rbac_not_bypass_it`,
+`test_INV_05_policy_domain_allowlist_roles_compose_with_rbac_not_bypass_it`.
+
+**Still a real, honest scoping limit, not fully closed:** the fix is
+opt-in per rule, not automatic. A future `path_scope`/`domain_allowlist`
+rule added for a tool that already has an `rbac` rule, whose author
+forgets to set `roles` to match, reintroduces this exact bug, and nothing
+in the engine or test suite catches that automatically — see ADR 0012's
+"Consequences" for why an automatic derivation was rejected and what a
+stronger structural guard would need to check.
+
+### Remaining Phase 4 scope (not yet built as of this note)
+
+- `firewall/anomaly.py` (rule-based anomaly detection: call-volume spike,
+  tool-outside-declared-set, high-risk sequence, argument-entropy jump) —
+  not started.
+- `scripts/verify_chain.py` and `scripts/query_logs.py` are still Phase-0
+  stubs; `firewall/logger.py`'s hash-chained audit log now exists for them
+  to walk/query against, but the real implementations aren't written yet.
+- `firewall/logger.py`'s hash-chain tamper-detection and redaction
+  behavior have been verified only via ad hoc smoke-testing scripts, not
+  formal `pytest` tests yet — a dedicated `tests/test_logger.py` (tamper
+  with a row and assert `verify_chain.py` detects it; plant a fake secret
+  and assert it never reaches the DB) is still to be written.
