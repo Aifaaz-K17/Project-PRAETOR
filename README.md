@@ -1,15 +1,24 @@
-# Deterministic Action Firewall for AI Agents
+# Praetor
 
-![Build Status](https://github.com/user/ai-agent-firewall/actions/workflows/ci.yml/badge.svg)
-<!-- TODO(verify): badge URL is a placeholder — this repo has no GitHub
-     remote configured yet. Update `user/ai-agent-firewall` above to the
-     real owner/repo once one exists (see LIMITATIONS.md). -->
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Python Version](https://img.shields.io/badge/python-3.14-blue.svg)](https://www.python.org/)
+**A deterministic action firewall for LLM agents.**
 
-A defensive security research tool providing runtime, action-layer policy enforcement for LLM-based agents (built on LangChain). Intercepts function/tool calls before execution to enforce parameter bounds, state invariants, RBAC scoping, and anomaly detection.
+[![CI](https://github.com/Aifaaz-K17/Project-PRAETOR/actions/workflows/ci.yml/badge.svg)](https://github.com/Aifaaz-K17/Project-PRAETOR/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![Python 3.14](https://img.shields.io/badge/python-3.14-blue.svg)](https://www.python.org/)
 
-> **Disclaimer**: This is a **defensive security research project**. All attack scenarios and test fixtures are executed in sandboxed local environments against mock tools (`read_file`, `send_email`, `search_web`, `transfer_funds`). No real-world targets or unauthorized external systems are accessed.
+LLM agents with tool access are vulnerable to indirect prompt injection: instructions
+hidden in fetched content can steer an agent into calling tools in harmful ways. Text
+filters try to catch the malicious *input*; Praetor checks the resulting *action*.
+
+Every tool call is intercepted, its arguments canonicalized, and the call evaluated
+against static human-authored policy before execution — fail-closed, with no language
+model anywhere in the decision path.
+
+> ⚠️ **Research project, not production software.** This is a final-year university
+> project. All tools are mocked and all attack scenarios run against a local sandbox
+> (`sandbox/`) — no real-world targets or unauthorized external systems are ever
+> accessed. See [`docs/THREAT_MODEL.md`](docs/THREAT_MODEL.md) for what Praetor does
+> **not** protect against.
 
 ---
 
@@ -33,26 +42,30 @@ graph TD
 ```
 /
 ├── firewall/             # Core firewall interception & policy engine library
-├── policies/             # YAML policy definition files
-├── demo_agent/           # Sample LangChain agent & mock tool definitions
-├── dashboard/            # Streamlit audit & monitoring dashboard
-├── tests/                # Test suite (pytest) & evaluation harness
-├── docs/                 # Project documentation & Knowledge Base Vault
-├── PROGRESS.md           # Phase status and execution notes
-├── requirements.txt      # Project dependencies
-└── README.md             # Project overview
+├── policies/              # YAML policy definition files
+├── demo_agent/            # Sample LangChain agent & mock tool definitions
+├── dashboard/             # Streamlit audit & monitoring dashboard
+├── tests/                 # Test suite (pytest) & evaluation harness
+├── docs/                  # Project documentation & Knowledge Base Vault
+├── scripts/               # Operational scripts (safe_push, verify_chain, ...)
+├── sandbox/               # Fixture filesystem for file-tool tests
+├── PROGRESS.md            # Phase status and execution notes
+├── LIMITATIONS.md         # Honest register of known gaps and shortcuts
+├── requirements.txt       # Project dependencies (exact-pinned)
+└── README.md              # Project overview
 ```
 
 ---
 
 ## Quickstart Setup
 
-1. **Clone the repository and enter directory**:
+1. **Clone the repository and enter the directory**:
    ```bash
-   cd "Project Main"
+   git clone https://github.com/Aifaaz-K17/Project-PRAETOR.git
+   cd Project-PRAETOR
    ```
 
-2. **Set up virtual environment**:
+2. **Set up a virtual environment**:
    ```bash
    python -m venv venv
    # On Windows PowerShell:
@@ -79,7 +92,7 @@ graph TD
    pre-commit install
    ```
 
-6. **Run test suite**:
+6. **Run the test suite**:
    ```bash
    pytest -v
    ```
@@ -98,4 +111,4 @@ graph TD
 
 ## License
 
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+This project is licensed under the MIT License — see the [LICENSE](LICENSE) file for details.
