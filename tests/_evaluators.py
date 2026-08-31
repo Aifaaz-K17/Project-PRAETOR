@@ -64,6 +64,18 @@ class MutatingEvaluator(RecordingEvaluator):
         return Decision.allow(reason="test evaluator: allow after mutating args")
 
 
+class NeedsApprovalEvaluator(RecordingEvaluator):
+    """Always returns NEEDS_APPROVAL — used by Phase 5's HITL tests to
+    exercise the interceptor's optional hitl_resolver wiring without a
+    real policy engine."""
+
+    def _decide(self, call: CallRecord) -> Decision:
+        return Decision.needs_approval(
+            reason="test evaluator: always needs approval",
+            rule_id="test-needs-approval",
+        )
+
+
 class RoleGatedEvaluator(RecordingEvaluator):
     """Allows only calls whose CallRecord.role equals `required_role`. Used
     to prove the role that matters is the one bound via contextvars, not

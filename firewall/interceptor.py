@@ -120,6 +120,23 @@ class Evaluator(Protocol):
     def evaluate(self, call: CallRecord) -> Decision: ...
 
 
+class HitlResolver(Protocol):
+    """What Phase 5's `firewall.hitl.HitlApprover` implements. Structural
+    typing, same pattern as `Evaluator` — this file deliberately never
+    imports `firewall.hitl` (which needs `CallRecord`/`Decision`/
+    `Outcome` from here), so defining the seam as a `Protocol` in this
+    module avoids a circular import while still type-checking the wiring
+    in `_evaluate_call` below.
+
+    Called only when a `Decision`'s outcome is `NEEDS_APPROVAL`; must
+    return a `Decision` whose outcome is `ALLOW` or `DENY` (never
+    `NEEDS_APPROVAL` again) — see `HitlApprover.resolve_approval`'s
+    docstring for the full contract (INV-12: single-use, timeout-denies).
+    """
+
+    def resolve_approval(self, call: CallRecord, decision: Decision) -> Decision: ...
+
+
 class ToolCallDenied(Exception):
     """Raised by the interceptor instead of letting a denied call execute."""
 
@@ -154,6 +171,7 @@ def _evaluate_call(
     evaluator: Evaluator,
     sequence_counters: _SequenceCounters,
     tool_call_id: str | None,
+    hitl_resolver: HitlResolver | None = None,
 ) -> tuple[Decision, dict[str, Any]]:
     """The single chokepoint every execution path calls before running a
     tool. Returns the Decision and the exact args snapshot to execute with.
@@ -162,13 +180,30 @@ def _evaluate_call(
     crashing evaluator, an unbound principal, or a malformed Decision all
     produce the same thing — a DENY tagged FIREWALL_ERROR — never a silent
     ALLOW and never a propagated exception that might let a caller's own
-    error handling accidentally proceed to execute the tool anyway.
+    error handling accidentally proceed to execute the tool anyway. The
+    optional Phase 5 HITL resolution step (below) runs inside this same
+    try/except for the same reason — a crashing/hanging approval channel
+    must fail closed too, not bypass the rest of this function's
+    guarantees.
 
     INV-07 (no TOCTOU): two independent deep copies are taken up front.
     `canonical_args` is handed to the evaluator and may be mutated by a
     careless or hostile policy hook — that copy is never used again.
     `args_for_execution` is what actually reaches the tool, and nothing
     after this point can change it.
+
+    `hitl_resolver`, if given, is consulted only when the evaluator
+    returns `NEEDS_APPROVAL` — it resolves that into a final ALLOW/DENY
+    `Decision` (a blocking human approval prompt, by default — see
+    `firewall.hitl`). Without one (the default, and every Phase 1-4
+    caller's existing behavior), `NEEDS_APPROVAL` is left as-is and
+    `Decision.allowed` treats it the same as DENY — fail-closed in the
+    absence of a real approval mechanism, exactly as documented since
+    Phase 3. Running this at the SAME chokepoint every other decision
+    goes through (not e.g. in `GuardedTool.invoke` after the fact) is
+    what makes total mediation (INV-02) apply to the HITL step too — no
+    execution path can reach a NEEDS_APPROVAL tool without going through
+    approval resolution.
     """
     canonical_args = copy.deepcopy(raw_args)
     args_for_execution = copy.deepcopy(raw_args)
@@ -194,6 +229,12 @@ def _evaluate_call(
             raise TypeError(
                 f"Evaluator must return a Decision, got {type(decision).__name__}"
             )
+        if hitl_resolver is not None and decision.outcome == Outcome.NEEDS_APPROVAL:
+            decision = hitl_resolver.resolve_approval(record, decision)
+            if not isinstance(decision, Decision):
+                raise TypeError(
+                    f"HitlResolver must return a Decision, got {type(decision).__name__}"
+                )
     except Exception as exc:  # noqa: BLE001 - INV-01: any firewall-side error is a DENY
         decision = Decision.deny(reason=f"FIREWALL_ERROR: {type(exc).__name__}: {exc}")
 
@@ -258,10 +299,12 @@ class GuardedTool:
         original: BaseTool,
         evaluator: Evaluator,
         sequence_counters: _SequenceCounters,
+        hitl_resolver: HitlResolver | None = None,
     ) -> None:
         self._original = original
         self._evaluator = evaluator
         self._sequence_counters = sequence_counters
+        self._hitl_resolver = hitl_resolver
         # Standard "this wraps something" marker (the convention
         # functools.wraps uses) — the INV-02 bypass-audit test's reflective
         # sweep checks every tool handed to an agent carries this.
@@ -296,6 +339,7 @@ class GuardedTool:
             evaluator=self._evaluator,
             sequence_counters=self._sequence_counters,
             tool_call_id=tool_call_id,
+            hitl_resolver=self._hitl_resolver,
         )
 
     async def ainvoke(
@@ -316,6 +360,7 @@ class GuardedTool:
             evaluator=self._evaluator,
             sequence_counters=self._sequence_counters,
             tool_call_id=tool_call_id,
+            hitl_resolver=self._hitl_resolver,
         )
 
     def run(self, tool_input: str | dict[str, Any], **kwargs: Any) -> Any:
@@ -331,6 +376,7 @@ class GuardedTool:
             evaluator=self._evaluator,
             sequence_counters=self._sequence_counters,
             tool_call_id=tool_call_id,
+            hitl_resolver=self._hitl_resolver,
         )
 
     async def arun(self, tool_input: str | dict[str, Any], **kwargs: Any) -> Any:
@@ -346,6 +392,7 @@ class GuardedTool:
             evaluator=self._evaluator,
             sequence_counters=self._sequence_counters,
             tool_call_id=tool_call_id,
+            hitl_resolver=self._hitl_resolver,
         )
 
     def batch(
@@ -368,13 +415,18 @@ class GuardedToolRegistry:
     `.get_tools_for_agent()` — nothing else exposes a callable tool.
     """
 
-    def __init__(self, evaluator: Evaluator) -> None:
+    def __init__(
+        self, evaluator: Evaluator, hitl_resolver: HitlResolver | None = None
+    ) -> None:
         self._evaluator = evaluator
+        self._hitl_resolver = hitl_resolver
         self._sequence_counters = _SequenceCounters()
         self._guarded_tools: dict[str, GuardedTool] = {}
 
     def register(self, tool: BaseTool) -> GuardedTool:
-        guarded = GuardedTool(tool, self._evaluator, self._sequence_counters)
+        guarded = GuardedTool(
+            tool, self._evaluator, self._sequence_counters, self._hitl_resolver
+        )
         self._guarded_tools[guarded.name] = guarded
         return guarded
 
@@ -399,7 +451,9 @@ class GuardedToolRegistry:
 _F = TypeVar("_F", bound=Callable[..., Any])
 
 
-def firewall_guard(evaluator: Evaluator) -> Callable[[_F], _F]:
+def firewall_guard(
+    evaluator: Evaluator, hitl_resolver: HitlResolver | None = None
+) -> Callable[[_F], _F]:
     """Developer sugar: guard a single plain function (sync or async) the
     same way GuardedToolRegistry guards a LangChain tool.
 
@@ -438,6 +492,7 @@ def firewall_guard(evaluator: Evaluator) -> Callable[[_F], _F]:
                     evaluator=evaluator,
                     sequence_counters=sequence_counters,
                     tool_call_id=None,
+                    hitl_resolver=hitl_resolver,
                 )
 
             return async_wrapper  # type: ignore[return-value]
@@ -456,6 +511,7 @@ def firewall_guard(evaluator: Evaluator) -> Callable[[_F], _F]:
                 evaluator=evaluator,
                 sequence_counters=sequence_counters,
                 tool_call_id=None,
+                hitl_resolver=hitl_resolver,
             )
 
         return sync_wrapper  # type: ignore[return-value]

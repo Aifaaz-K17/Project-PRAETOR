@@ -1,6 +1,6 @@
 # Praetor — Project Progress Tracking
 
-## Current Status: Phase 4 Complete (2026-09-01)
+## Current Status: Phase 5 Complete (2026-09-01)
 
 Phase plan below supersedes the earlier 0–8 outline: Phase 2 is now a
 dedicated Canonicalization layer, built and tested before the policy
@@ -272,9 +272,55 @@ engine ever sees a raw argument.
   (e.g. `domain-send-email-partner-needs-approval`), and doesn't check
   for an analogous gap against `sequence`/`rate` rules.
 
-### [ ] PHASE 5 — HITL Approval
-- `firewall/hitl.py`: blocking CLI approval, sanitized rendering (INV-12),
-  single-use call-ID with default-deny timeout.
+### [x] PHASE 5 — HITL Approval
+- **Completed**: 2026-09-01 · **Commit**: pending (staged locally).
+- `firewall/hitl.py`: `sanitize_for_display` (strips ANSI/CR/LF,
+  truncates, quotes — INV-12); `HitlChannel` protocol + real
+  `CliApprovalChannel` (blocking terminal `y/n`, reader-thread + bounded
+  `queue.Queue` for a cross-platform timeout — `select.select()` on
+  stdin isn't reliable on Windows console input); `HitlApprover`
+  (single-use `call_id` tracking under a lock, timeout→DENY, fails
+  closed on a channel crash, logs the resolution as a second audit row
+  suffixed `:hitl` rather than editing the original NEEDS_APPROVAL row —
+  INV-10's hash chain makes editing an existing row structurally
+  unsafe).
+- `firewall/interceptor.py`: new `HitlResolver` protocol (structural
+  typing, mirrors `Evaluator`) defined here specifically so this module
+  never has to import `firewall.hitl` (which needs `CallRecord`/
+  `Decision`/`Outcome` from here) — avoids a circular import.
+  `_evaluate_call` consults it inside the same fail-closed try/except
+  every decision already goes through, only when the evaluator returns
+  NEEDS_APPROVAL; threaded through `GuardedTool`/`GuardedToolRegistry`/
+  `firewall_guard` as an optional `hitl_resolver` parameter — default
+  `None` keeps every existing Phase 1-4 caller's behavior unchanged.
+- `tests/test_hitl.py` (31 tests): sanitized-display injection tests
+  (ANSI escape + CR/LF stripping — threat model T-14), a real
+  timeout-doesn't-hang test against a stream that never answers (T-15),
+  single-use replay refusal (T-15), fail-closed on a crashing channel,
+  the 2nd-audit-row proof, and full sync/async interceptor-wiring tests
+  (registry + `firewall_guard`, approve→executes / deny→`ToolCallDenied`).
+  New test double `NeedsApprovalEvaluator` added to `tests/_evaluators.py`.
+- ADR [`0015-hitl-resolution-mechanics`](docs/knowledge/decisions/0015-hitl-resolution-mechanics.md)
+  (the concrete engineering decisions — protocol placement, timeout
+  mechanism, audit-row shape — that
+  [`0005-hitl-approval-mechanism`](docs/knowledge/decisions/0005-hitl-approval-mechanism.md)
+  was written too early to make); new concept note
+  [`hitl-approval`](docs/knowledge/concepts/hitl-approval.md);
+  `interception-layer` concept note and `docs/ARCHITECTURE_MAP.md`
+  updated.
+- **Verified locally**: `ruff check .`, `black --check .`,
+  `mypy firewall/`, `pytest -v` (356 passed, 1 skipped), `bandit -r firewall/`
+  (0 issues), a real end-to-end smoke test wiring `PolicyEngine` →
+  `HitlApprover` → `CliApprovalChannel` together (not just mocks) against
+  the real `compose_draft`-as-`intern` NEEDS_APPROVAL rule, confirming a
+  scripted "y" answer produces `ALLOW`/`hitl:approved`.
+- **Known issues**: see `LIMITATIONS.md` Phase 5 section — a timed-out
+  reader thread is never cancelled (Python can't safely interrupt a
+  blocked read); `_consumed_call_ids` is unbounded for the life of a
+  `HitlApprover`; `scripts/query_logs.py` has no convenience filter
+  showing both audit rows for one logical call together; no dashboard
+  approve/deny button (ADR 0005's noted stretch goal); `demo_agent/`
+  doesn't wire this up yet (Phase 6's task).
 
 ### [ ] PHASE 6 — Dashboard + Integration + Attack Scenarios
 - Read-only Streamlit dashboard, `demo_agent/` with 5 mocked tools, 5
@@ -311,4 +357,9 @@ engine ever sees a raw argument.
 - Phase 4 verification commands all actually run — see command list
   above. Part 2, plus the pre-Phase-5 security review, committed as
   `1bcc6d3`.
-- Phase 5 (HITL Approval) starting now.
+- Phase 5 verification commands all actually run — see command list
+  above. Staged locally, not yet committed — per CLAUDE.md §3's
+  phase-gating rule, work stops at "phase done, summarized" and waits
+  for explicit confirmation before committing.
+- Ready to proceed to Phase 6 (Dashboard + Integration + Attack
+  Scenarios) upon confirmation.

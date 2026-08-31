@@ -12,6 +12,7 @@ A deterministic proxy/middleware security layer that sits between an LLM agent's
 - [[policy-engine]] — Evaluates tool parameters against explicit rules.
 - [[session-state-and-audit-trail]] — Per-session history and the tamper-evident record of every decision.
 - [[anomaly-detection]] — Second deterministic layer catching multi-call attack shapes.
+- [[hitl-approval]] — Out-of-band human approval for NEEDS_APPROVAL decisions.
 
 ## Used by
 - [[demo-agent]] — Standard defensive wrapper around LLM tools.

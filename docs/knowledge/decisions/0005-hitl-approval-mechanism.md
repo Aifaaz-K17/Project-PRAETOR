@@ -9,6 +9,15 @@ date: 2026-08-09
 ## Status
 Accepted (primary path). Dashboard-button approval noted as stretch goal.
 
+**Implemented 2026-09-01 (Phase 5), matching this decision exactly**:
+`firewall/hitl.py` — `CliApprovalChannel` is the blocking terminal `y/n`
+prompt this ADR specified, with zero external dependencies. The concrete
+engineering decisions this ADR was too early to make (how to time out a
+blocking read across platforms, where the resolution point lives
+relative to `firewall/interceptor.py`'s total-mediation chokepoint, how
+a HITL outcome gets audit-logged without breaking the hash chain) are
+in [[0015-hitl-resolution-mechanics]].
+
 ## Context
 The [[policy-engine]] returns ALLOW / DENY / NEEDS_APPROVAL per call. For NEEDS_APPROVAL, the system needs a mechanism for a human to approve or deny before the tool executes. Options range from Slack/webhook integration to a simple terminal prompt.
 

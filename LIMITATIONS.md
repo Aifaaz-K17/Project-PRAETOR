@@ -286,7 +286,7 @@ commit details.
   appears in a comment would pass it. Cheap insurance against a forgotten
   test, not a substitute for reviewing new tests by hand.
 
-## Phase 4 — Session State, Audit Trail, Anomaly Detection (in progress)
+## Phase 4 — Session State, Audit Trail, Anomaly Detection
 
 ### RBAC-bypass bug, found via testing (2026-08-31)
 
@@ -451,3 +451,51 @@ for the full reasoning):**
 - `demo_agent/interception_demo.py` (Phase 1) still does not wire up the
   real `PolicyEngine`/`SessionStore`/`AuditLogger`/anomaly detection —
   that's Phase 6's demo-scenario task, not a Phase 4 gap.
+
+## Phase 5 — HITL Approval
+
+- `firewall/hitl.py`: `sanitize_for_display` (strips C0 control chars —
+  ANSI/CR/LF — truncates, quotes), `HitlChannel` protocol +
+  `CliApprovalChannel` (blocking terminal `y/n`, reader-thread + bounded
+  `queue.Queue` timeout), `HitlApprover` (single-use `call_id` tracking,
+  timeout→DENY, fails closed on a channel crash, logs a second audit row
+  suffixed `:hitl`). Wired into `firewall/interceptor.py` via a
+  structural `HitlResolver` protocol (mirrors `Evaluator`) inside
+  `_evaluate_call`'s existing chokepoint/try-except, threaded through
+  `GuardedTool`/`GuardedToolRegistry`/`firewall_guard` as an optional
+  `hitl_resolver` parameter (default `None` — every existing caller's
+  behavior, NEEDS_APPROVAL treated as not-allowed, is unchanged). See
+  ADR [`0015-hitl-resolution-mechanics`](docs/knowledge/decisions/0015-hitl-resolution-mechanics.md).
+- `tests/test_hitl.py` (31 tests): sanitized-rendering injection tests
+  (`test_INV_12_ansi_escape_sequence_stripped_from_display`,
+  `test_INV_12_cr_lf_stripped_from_display` — threat model T-14), a real
+  timeout test that proves the channel doesn't hang past
+  `timeout_seconds` even against a stream that never answers
+  (`test_INV_12_cli_channel_timeout_denies_not_hangs` — T-15), single-use
+  replay refusal (`test_INV_12_approval_replay_refused_for_same_call_id`
+  — T-15), a fail-closed test for a crashing channel
+  (`test_INV_01_hitl_approver_channel_crash_fails_closed`), the 2nd
+  audit-row proof (`test_INV_10_hitl_approver_logs_a_second_audit_row_suffixed_hitl`),
+  and full interceptor-wiring tests (registry + `firewall_guard`,
+  sync + async, approve → tool executes / deny → `ToolCallDenied`).
+- **Honest scope limits, not fully closed (see ADR 0015's
+  "Consequences" for the full reasoning):**
+  - A timed-out `readline()`'s reader thread is never cancelled (Python
+    has no safe way to interrupt a blocked C-level read) — it stays
+    blocked on the input stream until a line eventually arrives
+    (discarded) or the process exits. Low-cost for this project's
+    demo-script usage pattern, not "no cost" — named precisely rather
+    than hidden.
+  - `HitlApprover._consumed_call_ids` grows for the life of the instance,
+    unbounded — the same accepted, documented tradeoff
+    `firewall/session.py`'s `SessionStore` already carries, scoped here
+    to only NEEDS_APPROVAL calls.
+  - `scripts/query_logs.py` doesn't yet have a convenience filter that
+    shows both audit rows (the original + the `:hitl` follow-up) for one
+    logical call together — a caller has to know to also query
+    `call_id:hitl`. A reasonable Phase 6/7 polish item, not built here.
+  - No dashboard "Approve/Deny" button (ADR 0005's noted stretch goal) —
+    the terminal prompt is the only implemented channel.
+  - `demo_agent/` still doesn't wire up `firewall/hitl.py` — that's
+    Phase 6's demo-scenario task, same boundary as Phase 4's anomaly
+    detection and session/audit wiring.
