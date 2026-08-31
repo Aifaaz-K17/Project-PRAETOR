@@ -120,7 +120,7 @@ engine ever sees a raw argument.
   not exhaustive Unicode confusables coverage).
 
 ### [x] PHASE 3 — Policy Engine
-- **Completed**: 2026-08-31
+- **Completed**: 2026-08-31 · **Commit**: `7bd719b` (code/tests/docs); `policies/*.yaml` pending a human commit from an interactive terminal (see below)
 - `firewall/policy_schema.py`: Pydantic v2 models for six rule types
   (`parameter_bounds`, `path_scope`, `domain_allowlist`, `sequence`,
   `rbac`, `rate`), frozen, `extra="forbid"`, unique-rule-id validation,
