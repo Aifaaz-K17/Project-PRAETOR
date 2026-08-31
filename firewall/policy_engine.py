@@ -31,6 +31,7 @@ from firewall.canonicalize import (
     canonical_email,
     canonical_host,
     canonical_path,
+    canonical_text,
     matches_domain_allowlist,
 )
 from firewall.interceptor import CallRecord, Decision
@@ -53,6 +54,24 @@ MAX_STRING_LENGTH = 65536
 MAX_NESTING_DEPTH = 10
 MAX_RULE_COUNT = 500
 REGEX_TIMEOUT_SECONDS = 0.5
+
+# A path_scope rule's allowed_roots (e.g. "sandbox" in policies/path_scope.yaml)
+# is authored relative to the repo root, not to whatever directory the
+# process happens to be launched from. Anchoring it here means
+# `python -m demo_agent.interception_demo` (or a future FastAPI service
+# with its own working directory) resolves "sandbox" the same way
+# regardless of caller cwd — previously a relative allowed_root was left
+# to Path.resolve()'s implicit cwd-relative behavior, so running from any
+# directory other than the repo root would resolve to a different,
+# probably-nonexistent path and silently deny every in-scope call (fails
+# safe, but confusingly — found by code review).
+_REPO_ROOT = Path(__file__).resolve().parent.parent
+
+
+def _resolve_allowed_root(root: str) -> Path:
+    root_path = Path(root)
+    return root_path if root_path.is_absolute() else _REPO_ROOT / root_path
+
 
 # (tool_name, called_at_utc) — the minimal session history a sequence/rate
 # rule needs. Phase 4's firewall/session.py owns the real session store;
@@ -252,17 +271,43 @@ def _matches_parameter_bounds(
         and value > rule.max
     ):
         return True
-    if rule.max_length is not None and len(str(value)) > rule.max_length:
-        return True
-    if rule.pattern is not None:
-        pattern = compiled_patterns[rule.id]
-        try:
-            if pattern.search(str(value), timeout=REGEX_TIMEOUT_SECONDS):
-                return True
-        except TimeoutError as exc:
-            raise PolicyEvaluationTimeout(
-                f"rule {rule.id!r} regex evaluation exceeded {REGEX_TIMEOUT_SECONDS}s"
-            ) from exc
+
+    if rule.max_length is not None or rule.pattern is not None:
+        # Text-shaped checks (length, denylist pattern) must run against
+        # canonicalized text (INV-06), not the raw value — otherwise a
+        # percent-encoded or zero-width-obfuscated payload sails straight
+        # past a denylist regex that only ever sees the raw string. This
+        # was a real bug: canonical_text() existed but was never called
+        # from here (found by code review, see LIMITATIONS.md).
+        text_result = canonical_text(str(value))
+        if not text_result.ok:
+            # A value the firewall can't even safely canonicalize is a
+            # bounds violation, not something to silently skip past —
+            # fail closed (INV-01/INV-06).
+            return True
+        normalized = text_result.value
+        if normalized is None:
+            # Unreachable given text_result.ok above, but `assert` is
+            # stripped under `python -O` (bandit B101) — stay a real,
+            # non-optimizable safeguard rather than trusting that
+            # invariant to hold forever.
+            raise RuntimeError(
+                "canonical_text reported ok=True but returned no value — this is a bug"
+            )
+
+        if rule.max_length is not None and len(normalized) > rule.max_length:
+            return True
+
+        if rule.pattern is not None:
+            pattern = compiled_patterns[rule.id]
+            try:
+                if pattern.search(normalized, timeout=REGEX_TIMEOUT_SECONDS):
+                    return True
+            except TimeoutError as exc:
+                raise PolicyEvaluationTimeout(
+                    f"rule {rule.id!r} regex evaluation exceeded {REGEX_TIMEOUT_SECONDS}s"
+                ) from exc
+
     return False
 
 
@@ -270,7 +315,8 @@ def _matches_path_scope(rule: PathScopeRule, call: CallRecord) -> bool:
     value = call.canonical_args.get(rule.parameter)
     if not isinstance(value, str):
         return False
-    return canonical_path(value, allowed_roots=list(rule.allowed_roots)).ok
+    resolved_roots = [_resolve_allowed_root(root) for root in rule.allowed_roots]
+    return canonical_path(value, allowed_roots=resolved_roots).ok
 
 
 def _matches_domain_allowlist(rule: DomainAllowlistRule, call: CallRecord) -> bool:

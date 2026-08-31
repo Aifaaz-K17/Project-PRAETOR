@@ -176,6 +176,69 @@
 
 ## Phase 3 — Policy Engine
 
+### Post-Phase-3 code review (2026-08-31)
+
+A 7-angle adversarial code review (`/code-review high c7e22e7..HEAD`) was
+run against everything from Phase 0 through Phase 3. Four confirmed,
+reproducible bugs were fixed immediately; one confirmed architectural gap
+is left open pending a design decision. See the CHANGELOG entry for
+commit details.
+
+**Fixed:**
+- **`parameter_bounds` rules (`max_length`/`pattern`) matched raw,
+  uncanonicalized text — a real INV-06 violation.** `canonical_text()`
+  existed specifically to strip zero-width/bidi characters and single-
+  percent-decode text before matching, but `_matches_parameter_bounds`
+  never called it. Concretely, the shipped denylist rule
+  `bounds-search-query-suspicious-pattern` could be evaded by
+  `"please bypass%20firewall now"` (percent-encoded space) or a query
+  with a zero-width character hidden inside one of the denylisted words —
+  exactly the obfuscation `canonical_text` exists to defeat, just never
+  invoked on this path. Independently confirmed by 5 of 7 review angles.
+  Fixed by canonicalizing the value before `max_length`/`pattern` checks,
+  treating a `canonical_text` rejection itself as a bounds violation
+  (fail closed). New tests:
+  `test_INV_06_policy_bounds_pattern_catches_percent_encoded_obfuscation`,
+  `test_INV_06_policy_bounds_pattern_catches_zero_width_obfuscation`,
+  `test_INV_06_policy_bounds_max_length_measured_after_canonicalization`,
+  `test_INV_06_policy_bounds_uncanonicalizable_value_fails_closed`.
+- **UNC-path rejection only matched the backslash form.** `_UNC_PREFIX_RE`
+  was `^\\\\`, but `Path("//attacker-server/share/x").is_absolute()` is
+  also `True` on Windows — the forward-slash UNC form fell through to a
+  real `.resolve()` attempt against the named host before the containment
+  check ran. Fixed by matching any two-or-more leading path separators in
+  either direction (`^[/\\]{2}`). New tests:
+  `test_INV_06_path_unc_prefix_forward_slash_form_denied`,
+  `test_INV_06_path_unc_prefix_mixed_slash_form_denied`.
+- **`transfer_funds`'s `note` field had a length cap but no content
+  denylist**, unlike its `query`/`subject` siblings. Added
+  `bounds-transfer-note-suspicious-pattern` to
+  `policies/parameter_bounds.yaml` (this fix also benefits from the
+  canonicalization fix above). New test:
+  `test_policy_bounds_transfer_note_suspicious_pattern`.
+- **`path_scope.yaml`'s `allowed_roots: ["sandbox"]` resolved relative to
+  the process's current working directory, not the repo root.** Failed
+  safe (denied everything) rather than open if launched from anywhere
+  else, but was confusing, undocumented fragility — e.g. a viva demo run
+  from the wrong shell would see every in-scope call silently denied.
+  Fixed by anchoring relative `allowed_roots` to `_REPO_ROOT =
+  Path(__file__).resolve().parent.parent` in `firewall/policy_engine.py`.
+  New test: `test_INV_06_policy_path_scope_allowed_root_independent_of_cwd`
+  (uses `monkeypatch.chdir` to a `tmp_path` and confirms the real rule
+  still resolves correctly).
+
+**Confirmed but left open — needs a design decision, not a quick patch:**
+- **"Unknown parameter → DENY" (INV-08's literal text) isn't structurally
+  enforced.** The engine only evaluates rules that name a specific
+  parameter; any argument no rule inspects passes through completely
+  unexamined. Fixing this properly needs a new concept — e.g. a rule type
+  or schema declaring each tool's full expected parameter set — which is
+  a real design decision (how strict, whether it's per-tool-mandatory or
+  opt-in, how it interacts with rules that already exist) rather than a
+  bug with one obvious correct fix. Not addressed in this pass; flagged
+  for a deliberate decision before Phase 6 gives the demo tools real
+  parameter schemas to make this concrete.
+
 - **`sequence` and `rate` rules need real session call history, which
   doesn't exist yet.** `PolicyEngine.evaluate()` — the adapter the live
   interceptor actually calls — always evaluates against an *empty*

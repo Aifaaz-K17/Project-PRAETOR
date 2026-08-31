@@ -340,6 +340,35 @@ def test_INV_06_path_unc_prefix_denied(sandbox: dict[str, Path]) -> None:
     assert not result.ok
 
 
+def test_INV_06_path_unc_prefix_forward_slash_form_denied(
+    sandbox: dict[str, Path],
+) -> None:
+    """The same UNC network-share attempt, spelled with forward slashes
+    instead of backslashes. pathlib treats `//server/share` as just as
+    absolute a UNC path as `\\\\server\\share` on Windows — an earlier
+    version of the UNC guard only matched the backslash form and let this
+    one fall through to a real resolve() attempt against the named host
+    (a real bug found by code review, fixed in firewall/canonicalize.py).
+    """
+    result = canonical_path(
+        "//attacker-server/share/file.txt",
+        allowed_roots=[sandbox["sandbox_root"]],
+        base_dir=sandbox["sandbox_root"],
+    )
+    assert not result.ok
+
+
+def test_INV_06_path_unc_prefix_mixed_slash_form_denied(
+    sandbox: dict[str, Path],
+) -> None:
+    result = canonical_path(
+        "/\\attacker-server\\share\\file.txt",
+        allowed_roots=[sandbox["sandbox_root"]],
+        base_dir=sandbox["sandbox_root"],
+    )
+    assert not result.ok
+
+
 # ---------------------------------------------------------------------------
 # Canonical[T] wrapper and other unit-level behavior
 # ---------------------------------------------------------------------------

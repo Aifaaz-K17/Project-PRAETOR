@@ -654,6 +654,24 @@ def test_policy_path_compose_draft_attachment_sandbox() -> None:
     assert bad.outcome == Outcome.DENY
 
 
+def test_INV_06_policy_path_scope_allowed_root_independent_of_cwd(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Real bug found by code review: path_scope.yaml's "sandbox" allowed
+    root used to resolve relative to the process's current working
+    directory, not the repo root — so a legitimate call would be silently
+    (and confusingly) denied if the process happened to be launched from
+    anywhere else. Changing directory to an unrelated tmp_path here and
+    confirming the real rule still resolves "sandbox" to the actual repo
+    sandbox/ directory proves the anchor-to-repo-root fix works."""
+    monkeypatch.chdir(tmp_path)
+    loaded = _load_single_real_rule("path-read-file-sandbox")
+    decision = evaluate_call(
+        make_call(tool_name="read_file", args={"path": "notes.txt"}), loaded
+    )
+    assert decision.outcome == Outcome.ALLOW
+
+
 # domain_allowlist
 def test_policy_domain_send_email_corp_triggers() -> None:
     loaded = _load_single_real_rule("domain-send-email-corp")
@@ -763,6 +781,86 @@ def test_policy_bounds_send_email_subject_suspicious_pattern() -> None:
     )
     assert decision.outcome == Outcome.DENY
     assert decision.rule_id == "bounds-send-email-subject-suspicious-pattern"
+
+
+def test_INV_06_policy_bounds_pattern_catches_percent_encoded_obfuscation() -> None:
+    """Real bug found by code review: _matches_parameter_bounds used to
+    run its denylist regex directly against the raw value, never through
+    canonical_text — so a percent-encoded space let a query sail straight
+    past this exact rule. Must be caught now."""
+    loaded = _load_single_real_rule("bounds-search-query-suspicious-pattern")
+    decision = evaluate_call(
+        make_call(
+            tool_name="search_web", args={"query": "please bypass%20firewall now"}
+        ),
+        loaded,
+    )
+    assert decision.outcome == Outcome.DENY
+    assert decision.rule_id == "bounds-search-query-suspicious-pattern"
+
+
+def test_INV_06_policy_bounds_pattern_catches_zero_width_obfuscation() -> None:
+    """Same bug, different obfuscation technique: a zero-width space
+    hidden *inside* one of the denylisted words (not replacing the real
+    space between them — a zero-width character is invisible, not a
+    space, so it splits a word's letters apart while the phrase still
+    reads as one word to a human)."""
+    zwsp = chr(0x200B)
+    loaded = _load_single_real_rule("bounds-search-query-suspicious-pattern")
+    decision = evaluate_call(
+        make_call(tool_name="search_web", args={"query": f"byp{zwsp}ass firewall"}),
+        loaded,
+    )
+    assert decision.outcome == Outcome.DENY
+    assert decision.rule_id == "bounds-search-query-suspicious-pattern"
+
+
+def test_INV_06_policy_bounds_max_length_measured_after_canonicalization() -> None:
+    """max_length must be checked against the canonicalized (decoded)
+    length, not the raw encoded length — otherwise a percent-encoded
+    payload could hide extra real content under an apparently-short raw
+    string."""
+    loaded = _load_single_real_rule("bounds-search-query-length")
+    long_query = "a" * 600  # over the 500 max_length, and plain ASCII so
+    # canonicalization doesn't change its length — isolates the max_length
+    # check itself rather than the decoding step.
+    decision = evaluate_call(
+        make_call(tool_name="search_web", args={"query": long_query}), loaded
+    )
+    assert decision.outcome == Outcome.DENY
+    assert decision.rule_id == "bounds-search-query-length"
+
+
+def test_INV_06_policy_bounds_uncanonicalizable_value_fails_closed() -> None:
+    """A value canonical_text itself rejects (here: residual/double
+    percent-encoding) must be treated as a bounds violation, not silently
+    passed through unmatched (INV-01 fail-closed applied to this path)."""
+    loaded = _load_single_real_rule("bounds-search-query-suspicious-pattern")
+    decision = evaluate_call(
+        make_call(tool_name="search_web", args={"query": "hello%2520world"}), loaded
+    )
+    assert decision.outcome == Outcome.DENY
+    assert decision.rule_id == "bounds-search-query-suspicious-pattern"
+
+
+def test_policy_bounds_transfer_note_suspicious_pattern() -> None:
+    """New rule added alongside the canonicalization fix: `note` had a
+    length cap but no content denylist, unlike its query/subject siblings
+    (found by code review)."""
+    loaded = _load_single_real_rule("bounds-transfer-note-suspicious-pattern")
+    decision = evaluate_call(
+        make_call(
+            tool_name="transfer_funds", args={"note": "urgent wire transfer please"}
+        ),
+        loaded,
+    )
+    assert decision.outcome == Outcome.DENY
+    assert decision.rule_id == "bounds-transfer-note-suspicious-pattern"
+
+    clean = evaluate_call(
+        make_call(tool_name="transfer_funds", args={"note": "October rent"}), loaded
+    )
+    assert clean.rule_id != "bounds-transfer-note-suspicious-pattern"
 
 
 # rbac

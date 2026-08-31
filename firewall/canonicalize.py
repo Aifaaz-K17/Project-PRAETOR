@@ -121,11 +121,19 @@ def _single_percent_decode(value: str) -> str | None:
 # canonical_path
 # ---------------------------------------------------------------------------
 
-# Windows UNC prefix (\\server\share\...) — a network-share access attempt
-# has no business inside a local sandbox root, on any platform this code
-# runs on, so it's rejected as a string pattern rather than relying on
-# platform-specific path parsing to catch it.
-_UNC_PREFIX_RE = re.compile(r"^\\\\")
+# Windows UNC prefix (\\server\share\... or //server/share/...) — a
+# network-share access attempt has no business inside a local sandbox
+# root, on any platform this code runs on, so it's rejected as a string
+# pattern rather than relying on platform-specific path parsing to catch
+# it. Matches two-or-more leading path separators in either direction
+# (backslash or forward slash, and any mix of the two): pathlib treats
+# `//server/share` as just as absolute a UNC path as `\\server\share` on
+# Windows (verified: `Path("//server/share/x").is_absolute()` is `True`
+# there) — an earlier version of this regex only matched the backslash
+# form, letting the forward-slash form fall through to a real
+# `.resolve()` attempt against an attacker-named host before the
+# containment check ever ran (found by code review).
+_UNC_PREFIX_RE = re.compile(r"^[/\\]{2}")
 
 
 def canonical_path(
