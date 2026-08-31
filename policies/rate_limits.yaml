@@ -1,0 +1,54 @@
+# Rate-limiting policies (rate rules).
+#
+# Written as action: deny, matching (and so blocking) when this call would
+# push the count of same-tool calls within `window_seconds` to or past
+# `max_calls`. Like sequence rules, this needs session-call-history —
+# same Phase 3 scope note as policies/sequence.yaml applies: the live
+# interceptor adapter evaluates against an empty history until Phase 4's
+# session store exists, which is fail-closed-correct (a call is never
+# wrongly counted as "under the limit" from missing history) but does mean
+# these rules cannot yet trigger through the live interceptor. Fully
+# implemented and tested directly in tests/test_policy_engine.py.
+
+default_action: deny
+
+rules:
+  - type: rate
+    id: rate-transfer-funds
+    tool: transfer_funds
+    action: deny
+    max_calls: 3
+    window_seconds: 60
+    description: At most 3 transfer_funds calls per rolling 60 seconds.
+
+  - type: rate
+    id: rate-send-email
+    tool: send_email
+    action: deny
+    max_calls: 10
+    window_seconds: 60
+    description: At most 10 send_email calls per rolling 60 seconds.
+
+  - type: rate
+    id: rate-search-web
+    tool: search_web
+    action: deny
+    max_calls: 30
+    window_seconds: 60
+    description: At most 30 search_web calls per rolling 60 seconds.
+
+  - type: rate
+    id: rate-compose-draft
+    tool: compose_draft
+    action: deny
+    max_calls: 20
+    window_seconds: 60
+    description: At most 20 compose_draft calls per rolling 60 seconds.
+
+  - type: rate
+    id: rate-read-file
+    tool: read_file
+    action: deny
+    max_calls: 50
+    window_seconds: 60
+    description: At most 50 read_file calls per rolling 60 seconds.

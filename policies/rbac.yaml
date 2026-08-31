@@ -1,0 +1,54 @@
+# RBAC scoping policies (rbac rules).
+#
+# Written as action: allow, matching when the calling principal's role
+# (bound via contextvars at session creation — INV-05, never read from the
+# call's own arguments) is in the rule's roles list. A role not listed for
+# a tool simply never gets an ALLOW vote and falls through to
+# default_action: deny — there's no need for an explicit "deny other
+# roles" rule per tool.
+
+default_action: deny
+
+rules:
+  - type: rbac
+    id: rbac-transfer-finance-and-admin
+    tool: transfer_funds
+    action: allow
+    roles: ["finance", "admin"]
+    description: Only the finance and admin roles may move money at all.
+
+  - type: rbac
+    id: rbac-read-file-analysts
+    tool: read_file
+    action: allow
+    roles: ["analyst", "finance", "admin"]
+    description: Reading sandboxed files is available to analyst-and-above roles.
+
+  - type: rbac
+    id: rbac-send-email-analysts
+    tool: send_email
+    action: allow
+    roles: ["analyst", "finance", "admin"]
+    description: Sending email is available to analyst-and-above roles.
+
+  - type: rbac
+    id: rbac-search-web-everyone
+    tool: search_web
+    action: allow
+    roles: ["intern", "analyst", "finance", "admin"]
+    description: Web search (against the reference-site allowlist) is available to every role.
+
+  - type: rbac
+    id: rbac-compose-draft-analysts
+    tool: compose_draft
+    action: allow
+    roles: ["analyst", "finance", "admin"]
+    description: Drafting an email is available to analyst-and-above roles.
+
+  - type: rbac
+    id: rbac-compose-draft-intern-needs-approval
+    tool: compose_draft
+    action: allow
+    requires_approval: true
+    roles: ["intern"]
+    description: An intern may draft an email, but a human must approve it first.

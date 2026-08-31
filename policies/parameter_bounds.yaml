@@ -1,0 +1,59 @@
+# Parameter-bound and suspicious-pattern policies (parameter_bounds rules).
+#
+# Written as action: deny, matching when the named parameter VIOLATES a
+# bound (out of min/max range, over max_length, or matches a denylisted
+# pattern). This lets a narrow DENY rule here override a broader ALLOW
+# rule elsewhere (e.g. an RBAC grant) — DENY wins in conflict resolution
+# (ADR 0009). Regex patterns are compiled with the `regex` package, linted
+# for ReDoS shapes, and evaluated under a timeout (INV-09).
+
+default_action: deny
+
+rules:
+  - type: parameter_bounds
+    id: bounds-transfer-max-amount
+    tool: transfer_funds
+    action: deny
+    parameter: amount
+    max: 1000
+    description: A single transfer above 1000 (currency unit) is denied outright.
+
+  - type: parameter_bounds
+    id: bounds-transfer-non-negative
+    tool: transfer_funds
+    action: deny
+    parameter: amount
+    min: 0
+    description: A negative transfer amount is nonsensical and denied.
+
+  - type: parameter_bounds
+    id: bounds-transfer-note-length
+    tool: transfer_funds
+    action: deny
+    parameter: note
+    max_length: 200
+    description: A transfer memo over 200 characters is denied.
+
+  - type: parameter_bounds
+    id: bounds-search-query-length
+    tool: search_web
+    action: deny
+    parameter: query
+    max_length: 500
+    description: An unreasonably long search query is denied (likely not a real search).
+
+  - type: parameter_bounds
+    id: bounds-search-query-suspicious-pattern
+    tool: search_web
+    action: deny
+    parameter: query
+    pattern: "(?i)bypass firewall|exfiltrate data|disable logging"
+    description: A search query containing an obvious self-referential attack phrase is denied.
+
+  - type: parameter_bounds
+    id: bounds-send-email-subject-suspicious-pattern
+    tool: send_email
+    action: deny
+    parameter: subject
+    pattern: "(?i)password reset|urgent wire transfer|social security number"
+    description: An email subject matching a common social-engineering phrase is denied.

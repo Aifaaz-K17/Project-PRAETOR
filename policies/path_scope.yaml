@@ -1,0 +1,27 @@
+# Path-traversal / allowed-roots policies (path_scope rules).
+#
+# path_scope rules are written as action: allow and match when the named
+# parameter IS a path inside allowed_roots (via firewall/canonicalize.py's
+# canonical_path — real filesystem resolution, never string matching).
+# Anything outside those roots simply never matches, and the policy set's
+# default_action: deny (below) blocks it — there's no need for a separate
+# "deny if outside" rule. See POLICY_GUIDE.md.
+
+default_action: deny
+
+rules:
+  - type: path_scope
+    id: path-read-file-sandbox
+    tool: read_file
+    action: allow
+    parameter: path
+    allowed_roots: ["sandbox"]
+    description: read_file may only read inside the sandbox/ fixture root.
+
+  - type: path_scope
+    id: path-compose-draft-attachment-sandbox
+    tool: compose_draft
+    action: allow
+    parameter: attachment_path
+    allowed_roots: ["sandbox"]
+    description: A drafted email's attachment must come from inside sandbox/.

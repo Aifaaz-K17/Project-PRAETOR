@@ -1,0 +1,37 @@
+# Domain-allowlist policies (domain_allowlist rules).
+#
+# Written as action: allow, matching when the named parameter's domain (a
+# bare host, OR the domain part of an email address — see
+# firewall/policy_engine.py's _matches_domain_allowlist) is the allowed
+# domain or a proper subdomain of it (label-boundary matching — INV-06).
+# Anything else falls through to default_action: deny.
+
+default_action: deny
+
+rules:
+  - type: domain_allowlist
+    id: domain-send-email-corp
+    tool: send_email
+    action: allow
+    parameter: to
+    allowed_domains: ["corp.example.com"]
+    description: send_email may address recipients at the company's own domain freely.
+
+  - type: domain_allowlist
+    id: domain-send-email-partner-needs-approval
+    tool: send_email
+    action: allow
+    requires_approval: true
+    parameter: to
+    allowed_domains: ["partner.example.org"]
+    description: >
+      Emailing the named external partner domain is allowed, but a human
+      must approve each one (NEEDS_APPROVAL, not an outright block).
+
+  - type: domain_allowlist
+    id: domain-search-web-reference-sites
+    tool: search_web
+    action: allow
+    parameter: target_host
+    allowed_domains: ["wikipedia.org", "docs.python.org", "github.com"]
+    description: search_web's mocked fetch is scoped to a small reference-site allowlist.

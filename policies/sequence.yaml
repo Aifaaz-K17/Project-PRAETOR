@@ -1,0 +1,26 @@
+# Call-sequence / state-machine policies (sequence rules).
+#
+# Written as action: deny, matching (and so blocking) when a required
+# prior tool call is MISSING from the session's history — this is what
+# lets the gate override a broader ALLOW rule (e.g. an RBAC grant) via
+# DENY-wins conflict resolution (ADR 0009). A rule that only "voted ALLOW
+# when satisfied" could not override an unrelated ALLOW rule the same way.
+#
+# Phase 3 scope note (see LIMITATIONS.md): PolicyEngine.evaluate() (the
+# adapter used by the live interceptor) currently always evaluates against
+# an EMPTY session history — real per-session history tracking is Phase
+# 4's firewall/session.py, not built yet. Until that's wired up, this rule
+# denies every send_email call at the interceptor level, which is the
+# fail-closed-correct behavior for an unknown prior-call history. The rule
+# itself is fully implemented and tested against directly-constructed
+# session history in tests/test_policy_engine.py.
+
+default_action: deny
+
+rules:
+  - type: sequence
+    id: sequence-send-email-requires-draft
+    tool: send_email
+    action: deny
+    requires_prior_tools: ["compose_draft"]
+    description: send_email is blocked unless compose_draft already happened in this session.
