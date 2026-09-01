@@ -92,6 +92,26 @@
   placeholder~~ — resolved 2026-08-31: now points at the real repo
   (`Aifaaz-K17/Project-PRAETOR`), though the badge itself can't turn green
   until CI has actually run once (see above).
+- ~~`scripts/safe_push.sh`'s `detect-secrets audit --report
+  --fail-on-unaudited .secrets.baseline` step~~ — resolved 2026-09-01:
+  found while actually using the script to push for the first time (a
+  Phase 0 deliverable that had apparently never been run end-to-end
+  before — every earlier push in this project was done from the user's
+  own terminal, per the note above, bypassing this script entirely).
+  `--fail-on-unaudited` is not a valid flag for the pinned
+  `detect-secrets==1.5.0`'s `audit` subcommand (confirmed via
+  `detect-secrets audit --help`) — the step always failed with an
+  argparse error, on every version of this script, for any user who
+  actually ran it. Fixed by replacing it with a direct read of
+  `.secrets.baseline`'s JSON (fail if any finding lacks an `is_secret`
+  label), which the pinned version has always supported. Also switched
+  step 3 (`pytest`) and step 4 (`pip-audit`) from the bare shim
+  executables to `python -m pytest`/`python -m pip_audit` — the shims
+  proved unreliable under this project's shell (one run silently
+  produced no output at exit 0, the next produced no output at exit 1,
+  with the real test suite genuinely green both times via `python -m
+  pytest` directly). The script now runs cleanly end-to-end; used to
+  push the Phase 4/Phase 5 commits.
 
 ## Phase 1 — Interception Layer
 
