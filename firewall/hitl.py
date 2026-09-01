@@ -46,6 +46,7 @@ from typing import Protocol, TextIO
 
 from firewall.interceptor import CallRecord, Decision, Outcome
 from firewall.logger import AuditLogger
+from firewall.session import SessionStore
 
 # ---------------------------------------------------------------------------
 # Sanitized rendering (INV-12: strip ANSI/CR/LF, truncate, quote)
@@ -147,6 +148,24 @@ class CliApprovalChannel:
     `input_stream` until the process exits or a line eventually arrives,
     which it then discards. This is a real, documented, and in a CLI
     demo tool low-cost tradeoff — see LIMITATIONS.md.
+
+    `_lock` serializes `request_approval` calls on one instance — a real
+    bug, found and fixed 2026-09-01: two NEEDS_APPROVAL calls resolved
+    concurrently (e.g. two parallel async tool calls, both HITL-gated —
+    `test_parallel_async_calls_within_same_principal_are_each_intercepted`
+    in `tests/test_interceptor.py` proves this shape is real) against a
+    *shared* channel would print two interleaved prompts to the same
+    terminal and race for the human's next typed line on the same
+    `input_stream` — whichever reader thread the OS happened to deliver
+    the line to "won" it, with no guarantee that was the request the
+    human actually meant to answer. A human could type "y" meaning to
+    approve a `read_file` request and unknowingly approve a
+    `transfer_funds` request instead. With the lock held for a whole
+    `request_approval` call, a second concurrent request simply waits
+    its turn — its own prompt isn't even shown, and its timeout clock
+    doesn't start, until the first request's full prompt-then-answer
+    cycle is done. See ADR 0015's addendum and
+    `test_INV_12_concurrent_approvals_are_serialized_not_interleaved`.
     """
 
     def __init__(
@@ -157,8 +176,17 @@ class CliApprovalChannel:
     ) -> None:
         self._input_stream = input_stream if input_stream is not None else sys.stdin
         self._output_stream = output_stream if output_stream is not None else sys.stdout
+        self._lock = threading.Lock()
 
     def request_approval(
+        self, call: CallRecord, decision: Decision, *, timeout_seconds: float
+    ) -> ApprovalResult:
+        with self._lock:
+            return self._request_approval_locked(
+                call, decision, timeout_seconds=timeout_seconds
+            )
+
+    def _request_approval_locked(
         self, call: CallRecord, decision: Decision, *, timeout_seconds: float
     ) -> ApprovalResult:
         print(
@@ -229,12 +257,16 @@ class HitlApprover:
     `timeout_seconds` and `channel` are the only required knobs;
     `audit_logger`, if given, gets a second, separate audit row per
     resolved approval (see `_log_resolution`'s docstring for why this is
-    a second row, never an edit to the first).
+    a second row, never an edit to the first). `session_store`, if
+    given, records an approved call the same way `PolicyEngine.evaluate`
+    already does for a plain ALLOW — see `resolve_approval`'s docstring
+    for the real bug this closes.
     """
 
     channel: HitlChannel
     timeout_seconds: float = DEFAULT_APPROVAL_TIMEOUT_SECONDS
     audit_logger: AuditLogger | None = None
+    session_store: SessionStore | None = None
     _consumed_call_ids: set[str] = field(default_factory=set, repr=False)
     _lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
 
@@ -242,6 +274,20 @@ class HitlApprover:
         """Not our concern unless `decision.outcome` is NEEDS_APPROVAL —
         anything else passes through unchanged, so this can be wired in
         unconditionally without affecting ALLOW/DENY decisions at all.
+
+        A real bug, found and fixed 2026-09-01: `PolicyEngine.evaluate`
+        records a call into `SessionStore` only when its OWN return
+        value is ALLOW — but a NEEDS_APPROVAL call that this method later
+        turns into ALLOW happens strictly *after* `PolicyEngine.evaluate`
+        has already returned, so `PolicyEngine` never sees the final
+        outcome and never records it. Concretely: an `intern`'s
+        `compose_draft` gets approved here, the tool genuinely executes
+        — but without this fix, session history stays empty, and the
+        very next `send_email` call is wrongly DENIED by
+        `sequence-send-email-requires-draft`, breaking the exact
+        multi-step workflow HITL approval exists to unblock. Fixed by
+        recording here too, mirroring `PolicyEngine.evaluate`'s own
+        "only on ALLOW" rule exactly.
         """
         if decision.outcome != Outcome.NEEDS_APPROVAL:
             return decision
@@ -274,6 +320,10 @@ class HitlApprover:
         latency_ns = time.perf_counter_ns() - started_at_ns
 
         final_decision = self._to_decision(result, original=decision)
+        if self.session_store is not None and final_decision.outcome == Outcome.ALLOW:
+            self.session_store.record_call(
+                call.session_id, call.tool_name, call.timestamp_utc
+            )
         self._log_resolution(call, final_decision, latency_ns)
         return final_decision
 

@@ -85,11 +85,18 @@ class Decision:
     NEEDS_APPROVAL). `allowed` is a derived, backward-compatible property
     — Phase 1's interceptor code was written against a boolean and still
     only needs to know "did this end up executing or not", which is true
-    for ALLOW and false for both DENY and NEEDS_APPROVAL. Until Phase 5's
-    HITL evaluator exists to actually pause and wait for a human, a
-    NEEDS_APPROVAL decision is treated the same as DENY at the interceptor
-    level — fail-closed in the absence of a real approval mechanism, not a
-    claim that approval is implemented (see LIMITATIONS.md).
+    for ALLOW and false for both DENY and NEEDS_APPROVAL.
+
+    Since Phase 5, `_evaluate_call` resolves a NEEDS_APPROVAL outcome
+    into a final ALLOW/DENY *before* anything ever reads `.allowed` — see
+    `HitlResolver` below — whenever a `hitl_resolver` is wired into
+    `GuardedToolRegistry`/`firewall_guard` (`firewall.hitl.HitlApprover`
+    is the real implementation). Without one configured (the default,
+    and every Phase 1-4 caller's unchanged behavior), a `Decision` this
+    class wraps can still legitimately carry `NEEDS_APPROVAL` all the
+    way to `.allowed`, which reads it as `False` — fail-closed in the
+    absence of a configured approval mechanism, not a claim that
+    approval is unimplemented (see `LIMITATIONS.md`).
     """
 
     outcome: Outcome

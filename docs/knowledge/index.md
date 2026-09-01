@@ -35,6 +35,7 @@ Welcome to the living architecture and knowledge vault for the **Deterministic A
 - [[0013-rule-based-anomaly-detection]] — four pure-function detectors (call volume, tool-outside-declared-set, high-risk sequence, argument entropy) folded into a policy Decision; opt-in, requires a `session_store`.
 - [[0014-phase4-security-review-findings]] — pre-Phase-5 review pass: a numeric-string type-confusion bypass in parameter_bounds min/max, two more instances of ADR 0012's RBAC-composition bug, and the structural guard test ADR 0012 named as a follow-up, now built.
 - [[0015-hitl-resolution-mechanics]] — HitlResolver as a Protocol on interceptor.py (avoids a circular import), reader-thread+queue timeout for cross-platform blocking approval, and why the HITL outcome is a second audit row rather than an edit to the first.
+- [[0016-phase5-security-review-findings]] — post-Phase-5 review pass: a concurrent-approval race that could misattribute a human's answer to the wrong request, a HITL-approved call never being recorded into session history (breaking the sequence gate it exists to unblock), and a fourth live instance of the ADR 0012/0014 RBAC-composition bug.
 
 ---
 

@@ -158,8 +158,25 @@ second documents "what actually happened once a human answered" —
   the append-only hash chain this project already committed to in
   Phase 4.
 
+## Update 2026-09-01 (same day, a review pass later)
+A deliberate review pass on this exact code found two more real gaps
+this decision's original scope didn't cover:
+
+1. `CliApprovalChannel` had no synchronization — two NEEDS_APPROVAL
+   calls resolved concurrently against a shared channel could interleave
+   prompts and race for the human's next typed answer, with no guarantee
+   it landed on the request the human meant to answer. Fixed with a
+   `threading.Lock` around the whole `request_approval` call.
+2. A HITL-approved call was never recorded into `SessionStore` —
+   `PolicyEngine.evaluate` only records on its *own* ALLOW return value,
+   which HITL resolution happens strictly after. `HitlApprover` gained
+   its own optional `session_store` field to close this.
+
+Full writeup: [[0016-phase5-security-review-findings]].
+
 ## Related
 - [[0005-hitl-approval-mechanism]]
 - [[interception-layer]]
 - [[session-state-and-audit-trail]]
 - [[0009-policy-conflict-resolution]]
+- [[0016-phase5-security-review-findings]]

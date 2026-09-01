@@ -93,6 +93,7 @@ reasoning. Praetor never asks the model whether an action is safe (INV-04).
 | T-16 | Erase or edit audit evidence | SHA-256 hash chain + `verify_chain.py` | INV-10 | Tamper-detection test |
 | T-17 | Secret leakage into the audit DB or the repo | Redaction before write; pre-commit + CI secret scanning | INV-11, INV-15 | Planted-key test, gitleaks in CI |
 | T-18 | Unguarded execution path (async, batch, retry, direct ref) | Registry-level wrapping + bypass audit test | INV-02 | `test_INV_02_*` (+ documented residual, see §5) |
+| T-19 | Concurrent approval requests confuse the human approver into answering the wrong one | Per-channel lock serializes `CliApprovalChannel.request_approval` — one full prompt-then-answer cycle at a time | INV-12 | `test_INV_12_concurrent_approvals_are_serialized_not_interleaved` |
 
 ---
 

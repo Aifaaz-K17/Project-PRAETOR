@@ -322,6 +322,43 @@ engine ever sees a raw argument.
   approve/deny button (ADR 0005's noted stretch goal); `demo_agent/`
   doesn't wire this up yet (Phase 6's task).
 
+### Post-Phase-5 security review pass
+- **Completed**: 2026-09-01 (same day as Phase 5) · **Commit**: pending
+  (staged locally).
+- User-requested bug/vulnerability/weakness pass on `firewall/hitl.py`
+  and its wiring, immediately after Phase 5 shipped and before it had
+  had any adversarial look.
+- **3 real bugs found, independently reproduced, and fixed**: (1)
+  concurrent NEEDS_APPROVAL calls resolved against a shared
+  `CliApprovalChannel` could race for the human's next typed answer,
+  misattributing it to the wrong request — fixed with a per-instance
+  lock serializing `request_approval`; new threat-model row T-19. (2)
+  a HITL-approved call was never recorded into `SessionStore` (only
+  `PolicyEngine.evaluate`'s own ALLOW return value triggers recording,
+  and HITL resolution happens strictly after that returns) — a
+  genuinely severe finding: an approved `compose_draft` executed but
+  the very next `send_email` was wrongly denied by the sequence gate it
+  was meant to unblock. Fixed by giving `HitlApprover` its own optional
+  `session_store`. (3) `domain-send-email-partner-needs-approval` — a
+  theoretical residual ADR 0014 explicitly flagged as unfixable "until
+  Phase 5 exists" — was confirmed live the same day Phase 5 shipped: an
+  `intern` with zero `send_email` RBAC grant could reach a real human
+  approval prompt for an external domain. Fixed the same way as the
+  three ADR 0012/0014 instances (populate `roles`); the structural
+  guard test was widened to no longer exempt `requires_approval`-shaped
+  rules.
+- ADR [`0016-phase5-security-review-findings`](docs/knowledge/decisions/0016-phase5-security-review-findings.md)
+  — full writeup; ADRs 0014 and 0015 both updated with pointers to it.
+- **Verified locally**: `ruff check .`, `black --check .`,
+  `mypy firewall/`, `pytest -v` (363 passed, 1 skipped), `bandit -r firewall/`
+  (0 issues), `pip-audit -r requirements.txt` (0 known vulns),
+  `scripts/verify_policies.py` OK — re-run after each individual fix.
+- **Known issues**: see `LIMITATIONS.md`'s new section — the
+  concurrency fix only serializes within one `CliApprovalChannel`
+  instance; a second concurrent request can wait an unbounded time
+  behind a first before its own prompt is shown; the widened structural
+  guard catches this specific bug class, not a genuinely new mechanism.
+
 ### [ ] PHASE 6 — Dashboard + Integration + Attack Scenarios
 - Read-only Streamlit dashboard, `demo_agent/` with 5 mocked tools, 5
   attack scenarios with `--no-firewall` baselines, `run_bypass_suite.py`
@@ -358,6 +395,8 @@ engine ever sees a raw argument.
   above. Part 2, plus the pre-Phase-5 security review, committed as
   `1bcc6d3`.
 - Phase 5 verification commands all actually run — see command list
-  above. Committed as `aca15b7`.
+  above. Committed as `aca15b7`; the fix for `scripts/safe_push.sh`
+  itself as `f0b6dbd`. The post-Phase-5 security review pass (3 more
+  bugs found and fixed) is staged locally, not yet committed.
 - Ready to proceed to Phase 6 (Dashboard + Integration + Attack
   Scenarios) upon confirmation.

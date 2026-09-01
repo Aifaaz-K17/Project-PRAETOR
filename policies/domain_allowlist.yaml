@@ -33,9 +33,22 @@ rules:
     requires_approval: true
     parameter: to
     allowed_domains: ["partner.example.org"]
+    roles: ["analyst", "finance", "admin"]
     description: >
-      Emailing the named external partner domain is allowed, but a human
-      must approve each one (NEEDS_APPROVAL, not an outright block).
+      Emailing the named external partner domain is allowed for
+      analyst-and-above roles, but a human must approve each one
+      (NEEDS_APPROVAL, not an outright block) — matching
+      rbac-send-email-analysts. Without this `roles` list, a role with
+      NO send_email RBAC grant at all (e.g. `intern`, once it has a
+      compose_draft in session history to satisfy the sequence gate)
+      could still reach a real human approval prompt for emailing an
+      external domain — a fourth real instance of the ADR 0012/0014 bug
+      class, and the first one that was purely theoretical when ADR 0014
+      wrote it up (Phase 5's HITL evaluator didn't exist yet, so
+      NEEDS_APPROVAL was unconditionally treated as DENY regardless of
+      role). Now that Phase 5 is built, this stopped being theoretical —
+      found and fixed 2026-09-01, same day as Phase 5 landed. See ADR
+      0014's "Consequences" and its update note.
 
   - type: domain_allowlist
     id: domain-search-web-reference-sites

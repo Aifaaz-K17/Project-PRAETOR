@@ -257,12 +257,18 @@ It's a schema error to set `requires_approval: true` on an `action: deny`
 rule — a deny rule already blocks the call outright, so there's nothing
 left to ask a human about.
 
-> **Phase 5 note:** `NEEDS_APPROVAL` is a real, distinct outcome
-> (`firewall.interceptor.Outcome.NEEDS_APPROVAL`), but the actual blocking
-> human-approval flow (`firewall/hitl.py`) doesn't exist until Phase 5.
-> Until then, `NEEDS_APPROVAL` behaves the same as `DENY` at the
-> interceptor level — fail-closed in the absence of a real approval
-> mechanism, not a claim that approval is implemented.
+> **Phase 5 update (2026-09-01):** `NEEDS_APPROVAL` is a real, distinct
+> outcome (`firewall.interceptor.Outcome.NEEDS_APPROVAL`), and
+> `firewall/hitl.py` now resolves it via a blocking terminal `y/n`
+> prompt, out-of-band from the agent (INV-12) — see [[hitl-approval]]
+> and ADR
+> [`0015-hitl-resolution-mechanics`](docs/knowledge/decisions/0015-hitl-resolution-mechanics.md).
+> This only happens when a `hitl_resolver` is actually wired into
+> `GuardedToolRegistry`/`firewall_guard` (e.g. a `firewall.hitl.HitlApprover`
+> instance) — without one (the default, and every caller's behavior
+> through Phase 4), `NEEDS_APPROVAL` still behaves the same as `DENY` at
+> the interceptor level, fail-closed in the absence of a configured
+> approval mechanism.
 
 ---
 

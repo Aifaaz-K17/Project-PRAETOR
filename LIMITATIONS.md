@@ -519,3 +519,66 @@ for the full reasoning):**
   - `demo_agent/` still doesn't wire up `firewall/hitl.py` — that's
     Phase 6's demo-scenario task, same boundary as Phase 4's anomaly
     detection and session/audit wiring.
+
+### Post-Phase-5 security review pass (2026-09-01)
+
+A deliberate bug/vulnerability/weakness review, requested the same day
+Phase 5 shipped, found three more real issues in `firewall/hitl.py` and
+its wiring. Full writeup: ADR
+[`0016-phase5-security-review-findings`](docs/knowledge/decisions/0016-phase5-security-review-findings.md).
+
+**Fixed:**
+- **Concurrent approval requests could race for the human's answer,
+  misattributing it to the wrong request.** `CliApprovalChannel` had no
+  synchronization; two NEEDS_APPROVAL calls resolved concurrently
+  against a shared channel (a real shape — parallel async tool calls are
+  already tested elsewhere in this project) could interleave prompts and
+  race for whichever reader thread the OS delivered the human's next
+  typed line to. Reproduced directly. Fixed with a per-instance
+  `threading.Lock` around the whole `request_approval` call — a second
+  concurrent request now waits its turn before its own prompt is even
+  shown. New threat-model row T-19. New test:
+  `test_INV_12_concurrent_approvals_are_serialized_not_interleaved`.
+- **A HITL-approved call was never recorded into session history.**
+  `PolicyEngine.evaluate` only records a call into `SessionStore` when
+  its own return value is ALLOW — but HITL resolution happens strictly
+  after `PolicyEngine.evaluate` already returned NEEDS_APPROVAL, so an
+  approval turning it into ALLOW was invisible to `PolicyEngine`.
+  Reproduced end-to-end: an approved `compose_draft` genuinely executed,
+  but the very next `send_email` call was wrongly DENIED by
+  `sequence-send-email-requires-draft` — breaking the exact workflow
+  HITL approval exists to unblock. Fixed by giving `HitlApprover` its
+  own optional `session_store` field, recording on ALLOW only,
+  mirroring `PolicyEngine`'s exact rule. New tests:
+  `test_INV_08_hitl_approver_records_an_approved_call_into_session_history`,
+  `test_INV_08_real_policy_engine_records_hitl_approved_call_into_session_history`.
+- **A fourth live instance of the ADR 0012/0014 RBAC-composition bug**,
+  on `domain-send-email-partner-needs-approval` — flagged as a
+  theoretical residual in ADR 0014 (written before Phase 5's HITL
+  evaluator existed to make NEEDS_APPROVAL resolvable at all) and
+  confirmed live the same day Phase 5 shipped: an `intern` with zero
+  `send_email` RBAC grant of any kind could reach a real human approval
+  prompt for emailing an external domain. Fixed the same way as every
+  prior instance (populate `roles`); the structural guard test was also
+  widened to stop exempting `requires_approval`-shaped rules, since the
+  reasoning for that exemption (NEEDS_APPROVAL can't "win outright"
+  pre-Phase-5) no longer holds. New tests:
+  `test_INV_05_policy_domain_send_email_partner_roles_compose_with_rbac`,
+  `test_INV_05_real_policy_engine_intern_cannot_reach_partner_approval_via_hitl`.
+
+**Still real, honest scope limits, not fully closed (see ADR 0016's
+"Consequences"):**
+- The concurrency fix serializes approvals *per `CliApprovalChannel`
+  instance* — two separate instances that happen to both wrap the same
+  real stdin/stdout wouldn't be serialized against each other (an
+  unusual construction nothing in this project actually does).
+- Serialization means a second concurrent approval request can wait
+  behind a first one for an unbounded amount of time before its own
+  prompt is even shown — correct for a single human operator (this
+  project's real usage shape), but worth naming precisely rather than
+  claiming "no cost."
+- The widened structural guard catches a fifth instance of the
+  unrestricted-allowlist-vs-rbac shape specifically; a genuinely new
+  bypass mechanism this review didn't anticipate would not be caught by
+  it — same honest completeness caveat every prior review pass in this
+  project has carried.

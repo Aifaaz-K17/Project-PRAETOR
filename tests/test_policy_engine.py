@@ -847,6 +847,29 @@ def test_policy_domain_send_email_partner_needs_approval() -> None:
     assert decision.outcome == Outcome.NEEDS_APPROVAL
 
 
+def test_INV_05_policy_domain_send_email_partner_roles_compose_with_rbac() -> None:
+    """Real bug found and fixed 2026-09-01, the same day Phase 5 (HITL)
+    landed: domain-send-email-partner-needs-approval used to be
+    unrestricted by role. Once Phase 5's HITL evaluator existed to
+    actually resolve NEEDS_APPROVAL into ALLOW, a role with zero
+    send_email RBAC grant (e.g. intern) could reach a real human
+    approval prompt for emailing an external domain — something RBAC
+    never intended to allow for that role at all, approval or not. Fixed
+    by adding roles matching rbac-send-email-analysts. See ADR 0014's
+    update note and tests/test_hitl.py's end-to-end proof through the
+    real HITL stack."""
+    loaded = _load_single_real_rule("domain-send-email-partner-needs-approval")
+    intern_call = make_call(
+        tool_name="send_email", role="intern", args={"to": "x@partner.example.org"}
+    )
+    assert evaluate_call(intern_call, loaded).outcome == Outcome.DENY
+
+    analyst_call = make_call(
+        tool_name="send_email", role="analyst", args={"to": "x@partner.example.org"}
+    )
+    assert evaluate_call(analyst_call, loaded).outcome == Outcome.NEEDS_APPROVAL
+
+
 def test_policy_domain_search_web_reference_sites() -> None:
     loaded = _load_single_real_rule("domain-search-web-reference-sites")
     ok = evaluate_call(
@@ -1294,20 +1317,34 @@ def test_all_shipped_rules_have_at_least_one_test() -> None:
 
 def test_INV_05_no_unrestricted_allowlist_rule_can_bypass_an_rbac_rule() -> None:
     """Structural guard for the bug class first found via testing in
-    Phase 4 (ADR 0012), then found TWICE more by a deliberate review pass
-    on 2026-09-01 (ADR 0014) on rules ADR 0012 itself did not touch
-    (path-compose-draft-attachment-sandbox, domain-search-web-reference-
-    sites). A `path_scope`/`domain_allowlist` rule with `action: allow`,
-    no `requires_approval`, and an empty `roles` field casts a plain
-    ALLOW vote for ANY role string at all — including one no `rbac` rule
-    for that tool ever named. Conflict resolution treats every matching
-    ALLOW vote as independently sufficient (ADR 0009), so that
-    unrestricted vote silently outvotes whatever restriction the tool's
-    `rbac` rule(s) meant to impose, rather than composing with it — even
-    when the `rbac` rule's own role list looks "complete" (e.g.
+    Phase 4 (ADR 0012), then found three more times by deliberate review
+    passes on 2026-09-01 (ADR 0014) on rules ADR 0012 itself did not
+    touch: path-compose-draft-attachment-sandbox,
+    domain-search-web-reference-sites, and (found only after Phase 5's
+    HITL mechanism actually existed to make it live)
+    domain-send-email-partner-needs-approval. A `path_scope`/
+    `domain_allowlist` rule with `action: allow` and an empty `roles`
+    field casts an ALLOW-or-NEEDS_APPROVAL vote for ANY role string at
+    all — including one no `rbac` rule for that tool ever named.
+    Conflict resolution treats every matching ALLOW/NEEDS_APPROVAL vote
+    as independently sufficient (ADR 0009), so that unrestricted vote
+    silently outvotes whatever restriction the tool's `rbac` rule(s)
+    meant to impose, rather than composing with it — even when the
+    `rbac` rule's own role list looks "complete" (e.g.
     rbac-search-web-everyone), because RBAC is a closed, enumerated
     allowlist (INV-08), not an open one, and an unrestricted allowlist
     rule doesn't check role at all.
+
+    Covers `requires_approval`-shaped rules too, not just plain ALLOW —
+    an earlier version of this guard exempted them on the reasoning that
+    NEEDS_APPROVAL couldn't "win outright" before Phase 5's HITL
+    evaluator existed (pre-Phase-5, NEEDS_APPROVAL was unconditionally
+    treated as DENY regardless of role). That reasoning stopped holding
+    the moment Phase 5 landed: a NEEDS_APPROVAL vote can now genuinely
+    resolve to ALLOW via a human's answer, so an unrestricted
+    `requires_approval`-shaped rule is exactly as much of a bypass risk
+    as a plain-ALLOW one — domain-send-email-partner-needs-approval was
+    a live instance of precisely this the same day Phase 5 shipped.
 
     This walks every rule actually shipped in `policies/` and fails if a
     new rule (or an edit to an existing one) reintroduces the pattern,
@@ -1325,17 +1362,17 @@ def test_INV_05_no_unrestricted_allowlist_rule_can_bypass_an_rbac_rule() -> None
         for rule in loaded.policy_set.rules
         if isinstance(rule, (PathScopeRule, DomainAllowlistRule))
         and rule.action == RuleAction.ALLOW
-        and not rule.requires_approval
         and not rule.roles
         and rule.tool in tools_with_an_rbac_rule
     ]
 
     assert violations == [], (
         f"these path_scope/domain_allowlist rules are unrestricted "
-        f"(action: allow, no requires_approval, empty roles) despite an "
-        f"rbac rule existing for the same tool — they will silently "
-        f"outvote that rbac rule's role restriction instead of composing "
-        f"with it (ADR 0012/0014): {violations}"
+        f"(action: allow, empty roles) despite an rbac rule existing for "
+        f"the same tool — they will silently outvote that rbac rule's "
+        f"role restriction instead of composing with it, whether they "
+        f"are plain-ALLOW or requires_approval-shaped (ADR 0012/0014): "
+        f"{violations}"
     )
 
 

@@ -48,7 +48,7 @@ Without a `hitl_resolver` wired into `GuardedToolRegistry`/
 | `session.py` | 177 | `SessionStore` — real per-session call history (INV-13: injectable clock), one lock per session, TTL eviction, append-only via `record_call`. `declare_session` optionally registers a session's expected tool set (consulted by `anomaly.py`). | — (no intra-package deps) |
 | `logger.py` | 391 | `AuditLogger` — SHA-256 hash-chained rows over WAL-mode SQLite (INV-10), `redact_value` secret-pattern redaction (INV-11). `verify_chain`/`ChainVerificationResult` — walks the chain, reports the first tampered row (shared by `scripts/verify_chain.py`). | `interceptor.py` (for `CallRecord`/`Decision` types) |
 | `anomaly.py` | 294 | Second deterministic layer (INV-04): 4 pure detectors (call-volume spike, tool-outside-declared-set, high-risk sequence, argument-entropy jump) over `(call, session_history, declared_tools)`. `apply_anomaly_findings` folds results into an already-computed `Decision`, never downgrading it. | `interceptor.py`, `session.py` |
-| `hitl.py` | 318 | Human-in-the-loop approval (INV-12). `sanitize_for_display` (strips ANSI/CR/LF, truncates, quotes); `HitlChannel` protocol + `CliApprovalChannel` (blocking `y/n` prompt, reader-thread+queue timeout); `HitlApprover` (single-use call-ID tracking, timeout→DENY, logs a 2nd audit row suffixed `:hitl`). Implements `interceptor.py`'s `HitlResolver` protocol structurally — never imported by `interceptor.py` itself (avoids a circular import). | `interceptor.py`, `logger.py` |
+| `hitl.py` | 368 | Human-in-the-loop approval (INV-12). `sanitize_for_display` (strips ANSI/CR/LF, truncates, quotes); `HitlChannel` protocol + `CliApprovalChannel` (blocking `y/n` prompt, reader-thread+queue timeout, per-instance lock serializing concurrent requests — T-19); `HitlApprover` (single-use call-ID tracking, timeout→DENY, records an approved call into an optional `session_store`, logs a 2nd audit row suffixed `:hitl`). Implements `interceptor.py`'s `HitlResolver` protocol structurally — never imported by `interceptor.py` itself (avoids a circular import). | `interceptor.py`, `logger.py`, `session.py` |
 
 ## `policies/` — the rules themselves (YAML, never agent-writable — INV-03)
 
@@ -75,18 +75,18 @@ currently on disk — faster than reading all 7 files by hand.
 | `query_logs.py` | Read-only CLI over the audit DB — filters by session/tool/outcome/role. Safe by construction: every row was already redacted at write time. |
 | `hooks/block_policy_commits.py` | Local pre-commit hook: refuses a `policies/*.yaml` commit when the `CI` env var is set (defense-in-depth for INV-03, not itself the enforcement — that's the interceptor never exposing `policies/` to agent-reachable code). |
 
-## `tests/` — 356 passed, 1 skipped (as of 2026-09-01)
+## `tests/` — 363 passed, 1 skipped (as of 2026-09-01)
 
 | File | Lines | Covers |
 |---|---|---|
 | `test_context.py` | 97 | `firewall/context.py` — INV-05 binding/isolation. |
 | `test_interceptor.py` | 483 | `firewall/interceptor.py` — the INV-02 bypass-audit headline test, INV-01/INV-07 fail-closed/TOCTOU tests. |
 | `test_canonicalize.py` | 407 | `firewall/canonicalize.py` — the 44-entry bypass corpus (`fixtures/bypass_corpus.yaml`) + ~25 dynamic tests. |
-| `test_policy_engine.py` | 1712 | `firewall/policy_engine.py` + `policy_schema.py` — by far the largest file: schema validation, load-time failures, per-rule-type isolated tests, conflict resolution, INV-09 bounds/ReDoS, the 70-entry benign-calls corpus, a Hypothesis determinism property test, `PolicyEngine` integration (session/audit/anomaly), and the structural RBAC-composition guard. |
+| `test_policy_engine.py` | 1749 | `firewall/policy_engine.py` + `policy_schema.py` — by far the largest file: schema validation, load-time failures, per-rule-type isolated tests, conflict resolution, INV-09 bounds/ReDoS, the 70-entry benign-calls corpus, a Hypothesis determinism property test, `PolicyEngine` integration (session/audit/anomaly), and the structural RBAC-composition guard (now covering `requires_approval`-shaped rules too). |
 | `test_session.py` | 173 | `firewall/session.py` — incl. an 8-thread×200-call concurrency test. |
 | `test_logger.py` | 319 | `firewall/logger.py` — hash-chain tamper detection (edited row, deleted row, first-break-only reporting), redaction end-to-end. |
 | `test_anomaly.py` | 348 | `firewall/anomaly.py` — each detector in isolation, orchestration order/determinism, every fold-in case. |
-| `test_hitl.py` | 470 | `firewall/hitl.py` + the interceptor's `hitl_resolver` wiring — sanitized-display injection tests (T-14: ANSI/CR stripping), CLI-channel timeout (T-15), `HitlApprover` single-use/timeout/crash-fails-closed, the 2nd-audit-row logging, and end-to-end registry/`firewall_guard` wiring (sync + async). |
+| `test_hitl.py` | 691 | `firewall/hitl.py` + the interceptor's `hitl_resolver` wiring — sanitized-display injection tests (T-14: ANSI/CR stripping), CLI-channel timeout (T-15), concurrent-approval serialization (T-19), `HitlApprover` single-use/timeout/crash-fails-closed, session-history recording, the 2nd-audit-row logging, and end-to-end registry/`firewall_guard` wiring (sync + async) against both test doubles and the real `PolicyEngine` + real `policies/`. |
 | `test_offline_enforcement.py` | 47 | `conftest.py`'s INV-14 network-blocking fixture. |
 | `test_scaffold.py` | 35 | Phase 0 scaffold sanity. |
 | `_evaluators.py` | 93 | Test-double `Evaluator` implementations (incl. `NeedsApprovalEvaluator` for Phase 5) used by `test_interceptor.py`/`test_hitl.py` (not a real policy engine). |
@@ -109,7 +109,7 @@ currently on disk — faster than reading all 7 files by hand.
   component (`action-firewall`, `interception-layer`, `canonicalization`,
   `policy-engine`, `session-state-and-audit-trail`, `anomaly-detection`,
   `hitl-approval`), each with `Depends on`/`Used by`/`Key decisions`.
-- `docs/knowledge/decisions/*.md` — ADRs 0003–0015, each a full
+- `docs/knowledge/decisions/*.md` — ADRs 0003–0016, each a full
   Context/Decision/Consequences/Alternatives writeup.
 - `LIMITATIONS.md` — every knowingly-unhandled case, by phase.
 - `PROGRESS.md` — phase-by-phase build log with commit hashes and what

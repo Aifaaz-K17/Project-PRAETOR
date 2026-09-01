@@ -110,6 +110,14 @@ regardless. This is named explicitly as a known, narrower residual: a
 `rbac` rule ever named a path to human approval, once Phase 5 exists —
 tracked in `LIMITATIONS.md`, not fixed here, since fixing it now would
 mean guessing at Phase 5's not-yet-built approval semantics.
+**Update 2026-09-01 (same day, after Phase 5 shipped):** this residual
+was not hypothetical for long — Phase 5 landed the same day, and a
+follow-up review found `domain-send-email-partner-needs-approval` was
+now a *live* instance of this exact gap (an `intern` with zero
+`send_email` RBAC grant could reach a real human approval prompt for
+emailing an external domain). Fixed, and the structural guard widened
+to cover `requires_approval`-shaped rules too. See
+[[0016-phase5-security-review-findings]].
 
 ### A non-finding, corrected in the same pass
 `firewall/session.py`'s `SessionStore.declare_session` unconditionally

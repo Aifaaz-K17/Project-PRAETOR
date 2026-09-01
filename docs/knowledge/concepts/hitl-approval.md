@@ -24,13 +24,23 @@ Four pieces:
   channel: prints a sanitized rendering, then blocks for an answer via a
   reader-thread-plus-`queue.Queue(timeout=...)` pattern (portable across
   platforms, unlike `select.select()` on Windows console stdin). No
-  answer within the timeout is `TIMED_OUT`, not a hang.
+  answer within the timeout is `TIMED_OUT`, not a hang. A per-instance
+  lock serializes concurrent `request_approval` calls — found and fixed
+  2026-09-01: without it, two concurrent NEEDS_APPROVAL calls against a
+  shared channel could interleave prompts and race for the human's next
+  typed line, misattributing an answer to the wrong request (T-19 in
+  `docs/THREAT_MODEL.md`). See [[0016-phase5-security-review-findings]].
 - **`HitlApprover`** — the orchestrator. Tracks consumed `call_id`s
   under a lock (INV-12: single-use — a repeat resolution attempt for the
   same `call_id` is refused, not re-prompted or reused); maps
   `APPROVED`/`DENIED`/`TIMED_OUT` to a final `Decision` tagged
   `hitl:approved`/`hitl:denied`/`hitl:timed_out`; fails closed
-  (`HITL_ERROR`) if the channel itself raises.
+  (`HITL_ERROR`) if the channel itself raises. Also records an approved
+  call into an optional `session_store`, mirroring `PolicyEngine`'s own
+  ALLOW-only recording rule — found and fixed 2026-09-01: without this,
+  an approved call was invisible to session history, wrongly denying the
+  very next `sequence`-gated call the approval was meant to unblock. See
+  [[0016-phase5-security-review-findings]].
 - **A second audit row, never an edit to the first** — if given an
   `AuditLogger`, `HitlApprover` logs the resolution as a new row with
   `call_id` suffixed `:hitl` and a fresh timestamp. INV-10's hash chain
@@ -65,3 +75,4 @@ logical call together.
 ## Key decisions
 - [[0005-hitl-approval-mechanism]] — Why a blocking terminal prompt, not Slack/webhook/dashboard.
 - [[0015-hitl-resolution-mechanics]] — Where resolution happens, the cross-platform timeout mechanism, why the audit trail is a second row.
+- [[0016-phase5-security-review-findings]] — Concurrent-approval race fix, session-history recording fix, and a fourth live RBAC-composition bypass (`domain-send-email-partner-needs-approval`) closed the same day Phase 5 shipped.
