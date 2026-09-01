@@ -371,9 +371,12 @@ def _matches_parameter_bounds(
     return False
 
 
-def _matches_path_scope(rule: PathScopeRule, call: CallRecord) -> bool:
-    if rule.roles and call.role not in rule.roles:
-        return False
+def _path_value_in_scope(rule: PathScopeRule, call: CallRecord) -> bool:
+    """Role-blind: is this rule's path condition satisfied at all,
+    ignoring `roles` entirely? Shared by `_matches_path_scope` (the
+    per-rule ALLOW vote, which DOES apply the role gate) and
+    `_check_argument_scope` (the structural gate below, which
+    deliberately does not — see that function's docstring)."""
     value = call.canonical_args.get(rule.parameter)
     if not isinstance(value, str):
         return False
@@ -381,9 +384,18 @@ def _matches_path_scope(rule: PathScopeRule, call: CallRecord) -> bool:
     return canonical_path(value, allowed_roots=resolved_roots).ok
 
 
-def _matches_domain_allowlist(rule: DomainAllowlistRule, call: CallRecord) -> bool:
+def _matches_path_scope(rule: PathScopeRule, call: CallRecord) -> bool:
     if rule.roles and call.role not in rule.roles:
         return False
+    return _path_value_in_scope(rule, call)
+
+
+def _domain_value_in_scope(rule: DomainAllowlistRule, call: CallRecord) -> bool:
+    """Role-blind: is this rule's domain condition satisfied at all,
+    ignoring `roles` entirely? Shared by `_matches_domain_allowlist`
+    (the per-rule ALLOW vote) and `_check_argument_scope` (the
+    structural gate below) — see `_path_value_in_scope`'s docstring for
+    why the split exists."""
     value = call.canonical_args.get(rule.parameter)
     if not isinstance(value, str):
         return False
@@ -405,6 +417,85 @@ def _matches_domain_allowlist(rule: DomainAllowlistRule, call: CallRecord) -> bo
     return any(
         matches_domain_allowlist(canonical, domain) for domain in rule.allowed_domains
     )
+
+
+def _matches_domain_allowlist(rule: DomainAllowlistRule, call: CallRecord) -> bool:
+    if rule.roles and call.role not in rule.roles:
+        return False
+    return _domain_value_in_scope(rule, call)
+
+
+def _check_argument_scope(call: CallRecord, loaded: LoadedPolicySet) -> str | None:
+    """Closes a real, severe bypass found via Phase 6 integration testing
+    (ADR 0017): an `rbac` rule's ALLOW vote never examines arguments at
+    all, so under conflict resolution's "any matching ALLOW vote is
+    independently sufficient" rule (ADR 0009), a role with an
+    unconditional `rbac` grant for a tool could bypass that tool's
+    `path_scope`/`domain_allowlist` scoping ENTIRELY — `path-read-file-
+    sandbox` and `domain-send-email-corp`'s `roles` fields (ADR
+    0012/0014/0016) restricted WHO could benefit from an unrestricted
+    allowlist rule's own vote, but never addressed that `rbac`'s vote is
+    ALSO unconditional and ALSO independently sufficient. Reproduced
+    directly: an `analyst` could read `../requirements.txt` via
+    `read_file` (escaping `sandbox/` entirely) and email
+    `attacker@evil.com` via `send_email`, both purely on
+    `rbac-read-file-analysts`/`rbac-send-email-analysts`'s blanket votes,
+    with `path-read-file-sandbox`/`domain-send-email-corp` never even
+    being consulted.
+
+    This is a structural gate, run once upfront — same timing as
+    `_check_unknown_parameters` — not a per-rule fix, because a per-rule
+    fix (e.g. converting `path_scope`/`domain_allowlist` to
+    `action: deny`) would break their existing OR-composition across
+    multiple rules for the same tool (e.g. `domain-send-email-corp`'s
+    plain ALLOW and `domain-send-email-partner-needs-approval`'s
+    NEEDS_APPROVAL are two independent tiers for the *same* `to`
+    parameter — each checking only its own narrow domain list — and
+    naively deny-shaping both would make each incorrectly reject values
+    the OTHER rule was meant to permit).
+
+    For every (tool, parameter) pair that has at least one `path_scope`/
+    `domain_allowlist` rule declared anywhere in the loaded policy set:
+    if THIS call touches that (tool, parameter), the value must be
+    in-scope for at least one such rule, checked *role-blind*
+    (`_path_value_in_scope`/`_domain_value_in_scope`, deliberately not
+    `_matches_path_scope`/`_matches_domain_allowlist`) — this gate's job
+    is only "is this argument even possibly legitimate for this tool at
+    all," not "who may use it." Role-based eligibility is still fully
+    enforced afterward, unchanged, by each rule's own `roles` field in
+    the normal per-rule vote. If no declared rule finds the value in
+    scope, the call is denied outright, before `rbac`'s blanket vote (or
+    any other ALLOW-type rule) is ever consulted.
+    """
+    scope_rules_by_tool_param: dict[
+        tuple[str, str], list[PathScopeRule | DomainAllowlistRule]
+    ] = {}
+    for rule in loaded.policy_set.rules:
+        if isinstance(rule, (PathScopeRule, DomainAllowlistRule)):
+            scope_rules_by_tool_param.setdefault(
+                (rule.tool, rule.parameter), []
+            ).append(rule)
+
+    for (_tool, parameter), rules in scope_rules_by_tool_param.items():
+        if not _rule_applies_to_tool(rules[0], call.tool_name):
+            continue
+        if parameter not in call.canonical_args:
+            continue
+
+        in_scope = any(
+            (
+                _path_value_in_scope(rule, call)
+                if isinstance(rule, PathScopeRule)
+                else _domain_value_in_scope(rule, call)
+            )
+            for rule in rules
+        )
+        if not in_scope:
+            return (
+                f"parameter {parameter!r} on tool {call.tool_name!r} is out of "
+                f"scope for every declared path_scope/domain_allowlist rule"
+            )
+    return None
 
 
 def _matches_sequence(
@@ -476,6 +567,12 @@ def evaluate_call(
     unknown_parameter_reason = _check_unknown_parameters(call, loaded)
     if unknown_parameter_reason is not None:
         return Decision.deny(reason=unknown_parameter_reason)
+
+    argument_scope_reason = _check_argument_scope(call, loaded)
+    if argument_scope_reason is not None:
+        return Decision.deny(
+            reason=argument_scope_reason, rule_id="argument-scope-gate"
+        )
 
     matched_deny: PolicyRule | None = None
     matched_needs_approval: PolicyRule | None = None

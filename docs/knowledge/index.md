@@ -17,6 +17,7 @@ Welcome to the living architecture and knowledge vault for the **Deterministic A
 - [[session-state-and-audit-trail]] — Per-session call history (`SessionStore`) and the hash-chained, redacted audit log (`AuditLogger`).
 - [[anomaly-detection]] — Second deterministic layer catching multi-call attack shapes a single-call policy rule can't see.
 - [[hitl-approval]] — Blocking, out-of-band terminal approval for NEEDS_APPROVAL decisions (INV-12).
+- [[demo-integration]] — The 5 mocked tools, the real full-stack wiring, 5 attack scenarios with baseline comparisons, and the read-only dashboard — every earlier phase assembled together for the first time.
 
 ---
 
@@ -36,6 +37,14 @@ Welcome to the living architecture and knowledge vault for the **Deterministic A
 - [[0014-phase4-security-review-findings]] — pre-Phase-5 review pass: a numeric-string type-confusion bypass in parameter_bounds min/max, two more instances of ADR 0012's RBAC-composition bug, and the structural guard test ADR 0012 named as a follow-up, now built.
 - [[0015-hitl-resolution-mechanics]] — HitlResolver as a Protocol on interceptor.py (avoids a circular import), reader-thread+queue timeout for cross-platform blocking approval, and why the HITL outcome is a second audit row rather than an edit to the first.
 - [[0016-phase5-security-review-findings]] — post-Phase-5 review pass: a concurrent-approval race that could misattribute a human's answer to the wrong request, a HITL-approved call never being recorded into session history (breaking the sequence gate it exists to unblock), and a fourth live instance of the ADR 0012/0014 RBAC-composition bug.
+- [[0017-argument-scope-gate]] — severe bug found via Phase 6 integration testing: an rbac rule's blanket ALLOW vote bypassed path_scope/domain_allowlist scoping entirely for any role it granted (an analyst could read arbitrary files or email an attacker's domain). Fixed with a role-blind structural gate, not a per-rule fix — preserves multi-rule OR-composition.
+
+---
+
+## Demo & Report Support
+
+- [[demo-integration]] — the 5 mocked tools, real full-stack wiring, attack scenarios, and dashboard.
+- `docs/DEMO_GUIDE.md` — how to run every Phase 6 demo/verification script.
 
 ---
 

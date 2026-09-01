@@ -44,7 +44,7 @@ Without a `hitl_resolver` wired into `GuardedToolRegistry`/
 | `interceptor.py` | 519 | The enforcement point (INV-02). `CallRecord`, `Decision`/`Outcome`, `Evaluator` + `HitlResolver` protocols, `GuardedTool`/`GuardedToolRegistry` (wraps a LangChain tool at registration time), `firewall_guard` decorator, `_evaluate_call` — the single fail-closed (INV-01), TOCTOU-safe (INV-07) chokepoint every execution path funnels through, including the optional Phase 5 HITL resolution step. | `context.py` |
 | `canonicalize.py` | 398 | INV-06: normalize-then-decide. `Canonical[T]` result wrapper; `canonical_path` (real `Path.resolve()`, UNC/NUL/percent-encoding rejection), `canonical_host` + `matches_domain_allowlist` (IDNA/punycode, label-boundary matching), `canonical_email`/`canonical_email_list` (spoofing-resistant), `canonical_text` (NFKC, zero-width/bidi stripping, single percent-decode). | — (no intra-package deps) |
 | `policy_schema.py` | 202 | Pydantic v2 models for the 7 rule types (`parameter_bounds`, `path_scope`, `domain_allowlist`, `sequence`, `rbac`, `rate`, `parameter_schema`), frozen, `extra="forbid"`, `PolicySet` with unique-rule-id validation. | — (no intra-package deps) |
-| `policy_engine.py` | 612 | The decision core. `load_policy_set` (INV-03: load-once, SHA-256-hashed); `evaluate_call` — pure (INV-13), conflict resolution DENY>NEEDS_APPROVAL>ALLOW>default (INV-08); INV-09 bounds + ReDoS defense (static lint + `regex` runtime timeout); `PolicyEngine` adapter wiring in session history, audit logging, and opt-in anomaly detection. | `interceptor.py`, `canonicalize.py`, `policy_schema.py`, `session.py`, `logger.py`, `anomaly.py` |
+| `policy_engine.py` | 709 | The decision core. `load_policy_set` (INV-03: load-once, SHA-256-hashed); `evaluate_call` — pure (INV-13), conflict resolution DENY>NEEDS_APPROVAL>ALLOW>default (INV-08); `_check_argument_scope` — a structural gate closing a severe bug where an `rbac` rule's blanket ALLOW vote bypassed `path_scope`/`domain_allowlist` scoping entirely (ADR 0017); INV-09 bounds + ReDoS defense (static lint + `regex` runtime timeout); `PolicyEngine` adapter wiring in session history, audit logging, and opt-in anomaly detection. | `interceptor.py`, `canonicalize.py`, `policy_schema.py`, `session.py`, `logger.py`, `anomaly.py` |
 | `session.py` | 177 | `SessionStore` — real per-session call history (INV-13: injectable clock), one lock per session, TTL eviction, append-only via `record_call`. `declare_session` optionally registers a session's expected tool set (consulted by `anomaly.py`). | — (no intra-package deps) |
 | `logger.py` | 391 | `AuditLogger` — SHA-256 hash-chained rows over WAL-mode SQLite (INV-10), `redact_value` secret-pattern redaction (INV-11). `verify_chain`/`ChainVerificationResult` — walks the chain, reports the first tampered row (shared by `scripts/verify_chain.py`). | `interceptor.py` (for `CallRecord`/`Decision` types) |
 | `anomaly.py` | 294 | Second deterministic layer (INV-04): 4 pure detectors (call-volume spike, tool-outside-declared-set, high-risk sequence, argument-entropy jump) over `(call, session_history, declared_tools)`. `apply_anomaly_findings` folds results into an already-computed `Decision`, never downgrading it. | `interceptor.py`, `session.py` |
@@ -73,16 +73,18 @@ currently on disk — faster than reading all 7 files by hand.
 | `verify_policies.py` | Loads `policies/` and prints a validation summary + integrity hash (INV-03). |
 | `verify_chain.py` | Thin CLI wrapper over `firewall.logger.verify_chain` — walks an audit DB, reports OK or the first tampered row, sets exit code. |
 | `query_logs.py` | Read-only CLI over the audit DB — filters by session/tool/outcome/role. Safe by construction: every row was already redacted at write time. |
+| `run_bypass_suite.py` | Phase 6 — replays the 44-entry bypass corpus against the real canonicalizers, sharing `tests/test_canonicalize.py`'s exact loading/checking logic (imported, not reimplemented). Exposes a public `run_bypass_suite()` function. |
+| `run_all_demos.py` | Phase 6 — orchestrates the policy-load check, the bypass suite, and all 5 attack scenarios into one unattended run with a summary/exit code. Excludes `demo_agent/full_demo.py` (blocks on real interactive input). |
 | `hooks/block_policy_commits.py` | Local pre-commit hook: refuses a `policies/*.yaml` commit when the `CI` env var is set (defense-in-depth for INV-03, not itself the enforcement — that's the interceptor never exposing `policies/` to agent-reachable code). |
 
-## `tests/` — 363 passed, 1 skipped (as of 2026-09-01)
+## `tests/` — 389 passed, 1 skipped (as of 2026-09-01)
 
 | File | Lines | Covers |
 |---|---|---|
 | `test_context.py` | 97 | `firewall/context.py` — INV-05 binding/isolation. |
 | `test_interceptor.py` | 483 | `firewall/interceptor.py` — the INV-02 bypass-audit headline test, INV-01/INV-07 fail-closed/TOCTOU tests. |
 | `test_canonicalize.py` | 407 | `firewall/canonicalize.py` — the 44-entry bypass corpus (`fixtures/bypass_corpus.yaml`) + ~25 dynamic tests. |
-| `test_policy_engine.py` | 1749 | `firewall/policy_engine.py` + `policy_schema.py` — by far the largest file: schema validation, load-time failures, per-rule-type isolated tests, conflict resolution, INV-09 bounds/ReDoS, the 70-entry benign-calls corpus, a Hypothesis determinism property test, `PolicyEngine` integration (session/audit/anomaly), and the structural RBAC-composition guard (now covering `requires_approval`-shaped rules too). |
+| `test_policy_engine.py` | 1926 | `firewall/policy_engine.py` + `policy_schema.py` — by far the largest file: schema validation, load-time failures, per-rule-type isolated tests, conflict resolution, INV-09 bounds/ReDoS, the 70-entry benign-calls corpus, a Hypothesis determinism property test, `PolicyEngine` integration (session/audit/anomaly), the structural RBAC-composition guard (covering `requires_approval`-shaped rules too), and the argument-scope-gate regression tests (ADR 0017). |
 | `test_session.py` | 173 | `firewall/session.py` — incl. an 8-thread×200-call concurrency test. |
 | `test_logger.py` | 319 | `firewall/logger.py` — hash-chain tamper detection (edited row, deleted row, first-break-only reporting), redaction end-to-end. |
 | `test_anomaly.py` | 348 | `firewall/anomaly.py` — each detector in isolation, orchestration order/determinism, every fold-in case. |
@@ -92,14 +94,20 @@ currently on disk — faster than reading all 7 files by hand.
 | `_evaluators.py` | 93 | Test-double `Evaluator` implementations (incl. `NeedsApprovalEvaluator` for Phase 5) used by `test_interceptor.py`/`test_hitl.py` (not a real policy engine). |
 | `fixtures/bypass_corpus.yaml` | — | 44 path/host/email/text bypass-attempt entries. |
 | `fixtures/benign_calls.yaml` | — | 70 legitimate calls (false-positive-rate corpus for Phase 7). |
+| `test_attack_scenarios.py` | 96 | `demo_agent/attack_scenarios.py` — every scenario's baseline must succeed unmediated and must be blocked when guarded; scenario 3 is RBAC-specific (not the amount bound); scenario 5's rate limit allows exactly 3 before blocking. |
+| `test_demo_wiring.py` | 107 | `demo_agent/wiring.py` — all 5 tools register, `.guarded()` lookup, a real call goes through the full stack and gets recorded, `fresh_db=True` actually starts clean, the context manager closes the audit logger. |
 
-## `demo_agent/` and `dashboard/` — not yet wired to the real firewall (Phase 6 scope)
+## `demo_agent/` and `dashboard/` — Phase 6
 
 | File | Status |
 |---|---|
 | `demo_agent/hello_world.py` | Phase 0 smoke test — proves a LangChain tool + a mock LLM round trip works, zero firewall code involved. |
 | `demo_agent/interception_demo.py` | Phase 1 demo — real `GuardedToolRegistry`, but `_DemoEvaluator` is an illustrative stand-in ("deny anything containing 'delete'"), not `PolicyEngine`. |
-| `dashboard/app.py` | Streamlit shell — static placeholder metrics, not reading real audit-log data yet. |
+| `demo_agent/tools.py` | Phase 6 — the 5 real mocked tools (`read_file`, `send_email`, `search_web`, `transfer_funds`, `compose_draft`), deliberately with no built-in argument validation of their own (naive, like a real unprotected integration) — `--no-firewall` attack-scenario baselines rely on this to demonstrate the vulnerability is real. `read_file` is the one that touches a real filesystem, resolved relative to `sandbox/`. |
+| `demo_agent/wiring.py` | Phase 6 — `build_firewall()` assembles the real, full stack (policy engine + session store + audit logger + HITL approver + registry) with all 5 tools registered — the first code in this project to combine every phase's piece together and actually run a call through all of them. Returns a `DemoFirewall` (context manager, `.guarded(name)` lookup). |
+| `demo_agent/attack_scenarios.py` | Phase 6 — 5 scenarios matching `docs/THREAT_MODEL.md`'s own "Scenario 1"–"Scenario 5" (T-1, T-3, T-6, T-8, T-9), each run both without and with the firewall. Building this found the severe bug fixed in ADR 0017. |
+| `demo_agent/full_demo.py` | Phase 6 — the interactive end-to-end walkthrough with a real HITL approval prompt (blocks on real stdin — verified with a piped answer, bounded by a timeout). |
+| `dashboard/app.py` | Phase 6 — real, read-only Streamlit dashboard over the audit database (replaces the Phase 0 static placeholder). Verified headless against real populated data + a health-endpoint check, not merely written and assumed to work. |
 
 ## Where the design reasoning lives (not repeated here)
 
@@ -108,9 +116,11 @@ currently on disk — faster than reading all 7 files by hand.
 - `docs/knowledge/index.md` — Map of Content: one concept note per
   component (`action-firewall`, `interception-layer`, `canonicalization`,
   `policy-engine`, `session-state-and-audit-trail`, `anomaly-detection`,
-  `hitl-approval`), each with `Depends on`/`Used by`/`Key decisions`.
-- `docs/knowledge/decisions/*.md` — ADRs 0003–0016, each a full
+  `hitl-approval`, `demo-integration`), each with `Depends on`/`Used by`/
+  `Key decisions`.
+- `docs/knowledge/decisions/*.md` — ADRs 0003–0017, each a full
   Context/Decision/Consequences/Alternatives writeup.
+- `docs/DEMO_GUIDE.md` — how to run every Phase 6 demo/verification script.
 - `LIMITATIONS.md` — every knowingly-unhandled case, by phase.
 - `PROGRESS.md` — phase-by-phase build log with commit hashes and what
   was actually verified.

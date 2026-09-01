@@ -582,3 +582,116 @@ its wiring. Full writeup: ADR
   bypass mechanism this review didn't anticipate would not be caught by
   it — same honest completeness caveat every prior review pass in this
   project has carried.
+
+## Phase 6 — Dashboard + Integration + Attack Scenarios
+
+### Severe bug found via integration testing (2026-09-01): rbac ALLOW bypassed path_scope/domain_allowlist entirely
+
+**Fixed.** While building Phase 6's real attack-scenario demos — the
+first code in this project to run a role-eligible call against the
+*combined* real `policies/` directory, rather than an isolated single
+rule — three real, live bypasses were found: an `analyst` could read
+`../requirements.txt` via `read_file` (escaping `sandbox/` entirely), an
+`analyst` could email `attacker@evil.com` via `send_email` once the
+sequence gate was satisfied, and an `intern` could reach an arbitrary
+non-allowlisted host via `search_web` — all three purely on an `rbac`
+rule's blanket, argument-blind ALLOW vote, with the tool's
+`path_scope`/`domain_allowlist` rule never actually consulted.
+
+This is a different, more severe bug than the four ADR 0012/0014/0016
+instances: those fixed an unrestricted allowlist rule's own vote
+reaching a role RBAC never granted; this one is `rbac`'s vote bypassing
+allowlist scoping entirely for a role RBAC *does* grant — a role with
+completely ordinary tool access could act on *any* argument value, not
+just in-scope ones. It slipped through every prior review because every
+existing test isolated one rule at a time
+(`_load_single_real_rule`) — nothing combined "a role with a genuine
+RBAC grant" with "an out-of-scope argument" against the full policy set
+until a real integration-shaped test existed to do it.
+
+Fixed with a new structural gate, `_check_argument_scope`, run before
+any rule votes (same timing as `_check_unknown_parameters`): for every
+`(tool, parameter)` with a declared `path_scope`/`domain_allowlist`
+rule, the call's value must be in scope for at least one such rule,
+checked role-blind, or the call is denied outright before `rbac`'s vote
+is ever consulted. See ADR
+[`0017-argument-scope-gate`](docs/knowledge/decisions/0017-argument-scope-gate.md)
+for the full incident, including why a per-rule fix (converting
+`path_scope`/`domain_allowlist` to `action: deny`) was considered and
+rejected — it would have broken the corp/partner two-tier domain
+allowlist's OR-composition. Zero test regressions: all 363 pre-existing
+tests passed unchanged; 7 new regression tests added.
+
+**Still a real, honest scoping limit, not fully closed:** the gate
+covers `path_scope`/`domain_allowlist` vs. `rbac` (and any other
+ALLOW-type rule) specifically. A hypothetical future rule type sharing
+`rbac`'s "blanket, argument-blind ALLOW" shape would need its own
+consideration of this exact failure mode — nothing generalizes it
+automatically. This is the fifth real bug found in RBAC-composition
+semantics across four review passes (ADR 0012, 0014, 0016, 0017) — the
+honest pattern is that this has been a persistently under-tested corner
+of the engine, not that this is necessarily the last instance.
+
+### Phase 6 completed (2026-09-01)
+
+- `demo_agent/tools.py`: the 5 mocked tools, deliberately with no
+  built-in argument validation (naive, matching a typical unprotected
+  tool integration) — this is what makes the attack scenarios'
+  `--no-firewall` baselines meaningful, not a claim these mocks are
+  "realistic" in every other respect. `read_file` is the only one that
+  touches a real filesystem (`sandbox/notes.txt`).
+- `demo_agent/wiring.py`: `build_firewall()` — the first code in this
+  project to assemble every phase's piece together (policy engine,
+  session store, audit logger, HITL approver, registry) and run real
+  calls through all of it.
+- `demo_agent/attack_scenarios.py`: 5 scenarios matching
+  `docs/THREAT_MODEL.md`'s own "Scenario 1"–"Scenario 5" (T-1, T-3, T-6,
+  T-8, T-9), each run both without and with the firewall. Building this
+  is what found the severe bug fixed in ADR 0017 (see above) — a real
+  demonstration of why integration testing matters beyond isolated unit
+  tests.
+- `demo_agent/full_demo.py`: the interactive walkthrough with a real
+  HITL approval prompt.
+- `dashboard/app.py`: real, read-only Streamlit dashboard over the audit
+  database — replaces the Phase 0 static-placeholder shell. Verified by
+  actually launching it headless against a populated database and
+  health-checking it (`/_stcore/health` → `ok`), not merely written and
+  assumed to work — Streamlit apps can't be meaningfully unit-tested the
+  way the rest of this project's code is, so this is the verification
+  method available.
+- `scripts/run_bypass_suite.py` and `scripts/run_all_demos.py`: CLI
+  tools replaying the bypass corpus and orchestrating every
+  non-interactive demo into one run with a summary/exit code.
+  `scripts/__init__.py` added so `run_all_demos.py` can cleanly import
+  `run_bypass_suite.py`'s public function instead of reaching into
+  private names or duplicating logic.
+- `docs/DEMO_GUIDE.md`: how to run every demo/verification script;
+  `docs/knowledge/concepts/demo-integration.md`: the concept note tying
+  it all together.
+- **Honest scope limits, not fully closed:**
+  - `dashboard/app.py` and `demo_agent/full_demo.py` have no dedicated
+    pytest test files — Streamlit apps and a script that blocks on real
+    interactive stdin aren't meaningfully unit-testable the way the rest
+    of this project is (the same precedent `demo_agent/interception_demo.py`
+    set in Phase 1). Both were verified by actually running them (a
+    headless Streamlit launch + health check for the dashboard; a piped
+    `y\n` answer for the full demo) and pasting real output, not assumed
+    correct from reading the code.
+  - `demo_agent/tools.py`'s mocks are naive by design (see above) — this
+    is deliberate for the attack-scenario comparison to mean anything,
+    but it also means these mocks are not a claim about what a
+    production tool integration should look like un-firewalled; they're
+    a controlled demonstration surface.
+  - The console output of several demo scripts (`firewall/anomaly.py`'s
+    own reason strings, which embed an em dash) can render as a mojibake
+    replacement character on a Windows console using a non-UTF-8
+    codepage (e.g. cp1252). Cosmetic only — the underlying reason text
+    and decision are correct regardless of how the em dash renders; not
+    fixed here, since it would mean touching `firewall/anomaly.py`'s
+    committed reason-string content for a display-only concern outside
+    Phase 6's scope. The demo scripts' own newly-written print
+    statements were fixed to use ASCII `--` specifically to avoid adding
+    to this.
+  - `scripts/run_all_demos.py` does not run `demo_agent/full_demo.py` —
+    documented, not an oversight (that script blocks on real interactive
+    input, which would hang an unattended run).

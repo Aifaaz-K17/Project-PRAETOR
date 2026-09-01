@@ -45,6 +45,24 @@ shipped rules to match their sibling `rbac` rule — see
 [[0012-rbac-composition-with-allowlist-rules]] for the full incident and
 why the fix is opt-in rather than automatic.
 
+Before any rule votes, `_check_argument_scope` closes the *mirror-image*
+bug (found via Phase 6 integration testing, ADR 0017): a co-located
+`rbac` rule's ALLOW vote never examines arguments at all, so it was
+*also* independently sufficient — for any role it granted — regardless
+of whether the actual path/domain value was in scope. `path-read-file-
+sandbox`/`domain-send-email-corp`'s own containment checks were being
+silently skipped entirely for a role RBAC already trusted. This gate is
+role-blind by design (it asks "is this argument even legitimate," not
+"who may use it") and runs structurally before voting, not as a change
+to any rule's own vote — a per-rule `action: deny` conversion was
+considered and rejected because it would break the corp/partner
+two-tier domain-allowlist OR-composition. See
+[[0017-argument-scope-gate]] for the full incident, including why four
+prior real bugs in this exact area (ADR 0012/0014/0016) never caught
+this — they all fixed the opposite direction (an allowlist rule's vote
+reaching a role RBAC never granted), not this one (RBAC's vote bypassing
+an allowlist rule's scoping for a role it did grant).
+
 29 rules ship across `policies/*.yaml` (path traversal, domain allowlists,
 transfer bounds, RBAC scoping, one sequence gate, five rate limits, five
 parameter schemas), each with at least one isolated test in
@@ -82,3 +100,5 @@ deterministic layer, not a change to conflict resolution itself.
 - [[0012-rbac-composition-with-allowlist-rules]] — RBAC-bypass bug via unconditional path_scope/domain_allowlist ALLOW votes; `roles` field fix.
 - [[0013-rule-based-anomaly-detection]] — Second deterministic layer catching multi-call context, not single-call rule violations.
 - [[0014-phase4-security-review-findings]] — numeric-string bypass fix for `min`/`max` bounds; two more RBAC-composition-bypass instances found and fixed; a structural guard test against a fourth.
+- [[0016-phase5-security-review-findings]] — a fourth live RBAC-composition-bypass instance, found only after Phase 5's HITL evaluator existed to make it live.
+- [[0017-argument-scope-gate]] — the mirror-image bug: an unconditional `rbac` ALLOW vote bypassing `path_scope`/`domain_allowlist` scoping entirely for any role it granted; fixed with a role-blind structural gate, not a per-rule change.

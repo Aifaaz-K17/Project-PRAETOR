@@ -126,6 +126,14 @@ in `tests/test_policy_engine.py`.
   `domain-search-web-reference-sites`), fixed the same way, and the
   named structural guard test was built. See
   [[0014-phase4-security-review-findings]].
+  **Update 2026-09-01 (later, Phase 6):** the `roles` field fix in this
+  ADR addresses one direction of RBAC composition — an unrestricted
+  allowlist rule's own vote reaching a role RBAC never granted. It does
+  **not** address the mirror-image direction — `rbac`'s own blanket vote
+  bypassing `path_scope`/`domain_allowlist` scoping entirely for a role
+  it *does* grant — which turned out to be a separate, more severe, live
+  bug (an analyst could read arbitrary files or email an attacker's
+  domain). See [[0017-argument-scope-gate]].
 - `compose_draft`'s coincidental safety (NEEDS_APPROVAL outranking the
   unconditional ALLOW) is not something to rely on if that rule's
   `requires_approval` flag is ever removed or its RBAC rule changed —

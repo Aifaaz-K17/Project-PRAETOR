@@ -1,0 +1,8 @@
+Praetor demo fixture file.
+
+This file exists so demo_agent's read_file tool has something real to
+read from inside the sandbox/ root (policies/path_scope.yaml's
+allowed_roots). It contains no secrets and no sensitive data — safe to
+commit, safe to show in a viva demo.
+
+Line 2: a second line, so the demo output isn't a single sentence.

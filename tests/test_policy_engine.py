@@ -1377,6 +1377,183 @@ def test_INV_05_no_unrestricted_allowlist_rule_can_bypass_an_rbac_rule() -> None
 
 
 # ---------------------------------------------------------------------------
+# ADR 0017 — the argument-scope gate: an unconditional rbac ALLOW vote
+# must not bypass path_scope/domain_allowlist scoping entirely
+# ---------------------------------------------------------------------------
+
+
+def test_INV_08_real_policy_set_rbac_grant_cannot_bypass_path_scope() -> None:
+    """Real, severe bug found via Phase 6 integration testing, fixed
+    2026-09-01 (ADR 0017): `rbac-read-file-analysts` votes ALLOW for
+    ANY `read_file` call by an analyst, regardless of path — since it
+    never examines arguments at all. Before the argument-scope gate
+    existed, that unconditional vote alone satisfied conflict
+    resolution, so `path-read-file-sandbox`'s containment check was
+    NEVER actually consulted for a role RBAC already granted. Reproduced
+    directly: an analyst could read `../requirements.txt`, escaping
+    `sandbox/` entirely, purely on the RBAC vote."""
+    loaded = load_policy_set(REAL_POLICY_DIR)
+    decision = evaluate_call(
+        make_call(
+            tool_name="read_file", role="analyst", args={"path": "../requirements.txt"}
+        ),
+        loaded,
+    )
+    assert decision.outcome == Outcome.DENY
+    assert decision.rule_id == "argument-scope-gate"
+
+
+def test_INV_08_real_policy_set_rbac_grant_cannot_bypass_domain_allowlist() -> None:
+    """Same bug, on `send_email`: `rbac-send-email-analysts` votes ALLOW
+    for ANY `send_email` call by an analyst, regardless of destination
+    domain. Reproduced directly: once the sequence gate was satisfied (a
+    completely normal prior compose_draft), an analyst could email
+    `attacker@evil.com` purely on the RBAC vote, with
+    `domain-send-email-corp`'s allowlist never consulted."""
+    loaded = load_policy_set(REAL_POLICY_DIR)
+    now = datetime.now(timezone.utc)
+    history = (("compose_draft", now - timedelta(seconds=5)),)
+    decision = evaluate_call(
+        make_call(
+            tool_name="send_email", role="analyst", args={"to": "attacker@evil.com"}
+        ),
+        loaded,
+        session_history=history,
+    )
+    assert decision.outcome == Outcome.DENY
+    assert decision.rule_id == "argument-scope-gate"
+
+
+def test_INV_08_real_policy_set_rbac_everyone_grant_cannot_bypass_search_web_allowlist() -> (
+    None
+):
+    """Same bug on `search_web`: `rbac-search-web-everyone` grants
+    every role a blanket vote, so ANY role — not just intern — could
+    reach an arbitrary, non-allowlisted host purely on that vote."""
+    loaded = load_policy_set(REAL_POLICY_DIR)
+    decision = evaluate_call(
+        make_call(
+            tool_name="search_web",
+            role="intern",
+            args={"query": "x", "target_host": "evil-exfil-server.com"},
+        ),
+        loaded,
+    )
+    assert decision.outcome == Outcome.DENY
+    assert decision.rule_id == "argument-scope-gate"
+
+
+def test_INV_08_real_policy_set_legitimate_in_scope_calls_still_allowed() -> None:
+    """The gate must not become a second, redundant restriction on top
+    of legitimate in-scope calls — every one of these must still resolve
+    exactly as it did before the gate existed."""
+    loaded = load_policy_set(REAL_POLICY_DIR)
+    now = datetime.now(timezone.utc)
+    history = (("compose_draft", now - timedelta(seconds=5)),)
+
+    read = evaluate_call(
+        make_call(tool_name="read_file", role="analyst", args={"path": "notes.txt"}),
+        loaded,
+    )
+    assert read.outcome == Outcome.ALLOW
+    assert read.rule_id == "path-read-file-sandbox"
+
+    corp_email = evaluate_call(
+        make_call(
+            tool_name="send_email",
+            role="analyst",
+            args={"to": "alice@corp.example.com"},
+        ),
+        loaded,
+        session_history=history,
+    )
+    assert corp_email.outcome == Outcome.ALLOW
+    assert corp_email.rule_id == "domain-send-email-corp"
+
+    search = evaluate_call(
+        make_call(
+            tool_name="search_web",
+            role="intern",
+            args={"query": "x", "target_host": "docs.python.org"},
+        ),
+        loaded,
+    )
+    assert search.outcome == Outcome.ALLOW
+
+
+def test_INV_08_real_policy_set_two_tier_domain_allowlist_still_composes_as_or() -> (
+    None
+):
+    """The key design constraint the gate had to preserve: two SEPARATE
+    domain_allowlist rules for the same (tool, parameter) — the corp
+    domain's plain ALLOW and the partner domain's NEEDS_APPROVAL — each
+    checking only their OWN narrow domain list, must still compose as OR
+    (either one matching is enough), not each incorrectly reject values
+    only the OTHER rule was meant to permit. A naive per-rule DENY
+    conversion would have broken exactly this."""
+    loaded = load_policy_set(REAL_POLICY_DIR)
+    now = datetime.now(timezone.utc)
+    history = (("compose_draft", now - timedelta(seconds=5)),)
+
+    to_corp = evaluate_call(
+        make_call(
+            tool_name="send_email",
+            role="analyst",
+            args={"to": "alice@corp.example.com"},
+        ),
+        loaded,
+        session_history=history,
+    )
+    assert to_corp.outcome == Outcome.ALLOW
+
+    to_partner = evaluate_call(
+        make_call(
+            tool_name="send_email",
+            role="analyst",
+            args={"to": "bob@partner.example.org"},
+        ),
+        loaded,
+        session_history=history,
+    )
+    assert to_partner.outcome == Outcome.NEEDS_APPROVAL
+    assert to_partner.rule_id == "domain-send-email-partner-needs-approval"
+
+
+def test_argument_scope_gate_is_a_noop_for_a_tool_with_no_scope_rules() -> None:
+    """transfer_funds has no path_scope/domain_allowlist rule at all —
+    the gate must not affect it in any way (it only ever gates
+    (tool, parameter) pairs that actually have a declared scope rule)."""
+    loaded = load_policy_set(REAL_POLICY_DIR)
+    decision = evaluate_call(
+        make_call(
+            tool_name="transfer_funds",
+            role="finance",
+            args={"amount": 100, "note": "n"},
+        ),
+        loaded,
+    )
+    assert decision.outcome == Outcome.ALLOW
+    assert decision.rule_id != "argument-scope-gate"
+
+
+def test_argument_scope_gate_ignores_a_parameter_the_call_never_supplied() -> None:
+    """A call that omits the scoped parameter entirely (e.g. compose_draft
+    with no attachment_path) must not be denied by the gate — the gate
+    only fires when the call actually supplies a value for a scoped
+    parameter."""
+    loaded = load_policy_set(REAL_POLICY_DIR)
+    decision = evaluate_call(
+        make_call(
+            tool_name="compose_draft",
+            role="analyst",
+            args={"subject": "s", "body": "b"},
+        ),
+        loaded,
+    )
+    assert decision.rule_id != "argument-scope-gate"
+
+
+# ---------------------------------------------------------------------------
 # The benign-calls corpus (false-positive check)
 # ---------------------------------------------------------------------------
 

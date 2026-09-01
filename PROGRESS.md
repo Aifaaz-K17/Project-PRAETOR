@@ -1,6 +1,6 @@
 # Praetor — Project Progress Tracking
 
-## Current Status: Phase 5 Complete (2026-09-01)
+## Current Status: Phase 6 Complete (2026-09-01)
 
 Phase plan below supersedes the earlier 0–8 outline: Phase 2 is now a
 dedicated Canonicalization layer, built and tested before the policy
@@ -358,10 +358,73 @@ engine ever sees a raw argument.
   behind a first before its own prompt is shown; the widened structural
   guard catches this specific bug class, not a genuinely new mechanism.
 
-### [ ] PHASE 6 — Dashboard + Integration + Attack Scenarios
-- Read-only Streamlit dashboard, `demo_agent/` with 5 mocked tools, 5
-  attack scenarios with `--no-firewall` baselines, `run_bypass_suite.py`
-  against the full bypass corpus, `run_all_demos.py`.
+### [x] PHASE 6 — Dashboard + Integration + Attack Scenarios
+- **Completed**: 2026-09-01 · **Commit**: pending (staged locally).
+- `demo_agent/tools.py`: the 5 mocked tools, deliberately with NO
+  built-in argument validation (naive, like a typical unprotected tool
+  integration would be) — `read_file` is the one that touches a real
+  filesystem, resolved relative to `sandbox/` with no containment check
+  of its own; the other four are pure mocks. `sandbox/notes.txt` added
+  as the real fixture file `read_file` reads.
+- `demo_agent/wiring.py`: `build_firewall()` assembles the REAL full
+  stack (`load_policy_set` → `SessionStore` → `AuditLogger` →
+  `HitlApprover` → `PolicyEngine` → `GuardedToolRegistry`) with all 5
+  tools registered — the first code in this project to do so; every
+  earlier phase tested its own piece in isolation. Returns a
+  `DemoFirewall` (a context manager, `.guarded(name)` lookup).
+- **Severe real bug found and fixed while building this**: the very
+  first real attack-scenario test (an analyst reading `read_file` with
+  a `../` traversal payload) revealed that an `rbac` rule's blanket
+  ALLOW vote bypasses `path_scope`/`domain_allowlist` scoping entirely
+  for any role it grants — a much more severe, live version of the
+  ADR 0012/0014/0016 bug class, affecting `read_file`, `send_email`, and
+  `search_web`. Fixed with a new structural gate,
+  `_check_argument_scope`. See ADR
+  [`0017-argument-scope-gate`](docs/knowledge/decisions/0017-argument-scope-gate.md)
+  and `LIMITATIONS.md`'s Phase 6 section for the full incident. 7
+  regression tests in `tests/test_policy_engine.py`; zero regressions in
+  the 363 pre-existing tests.
+- `demo_agent/attack_scenarios.py`: 5 scenarios matching
+  `docs/THREAT_MODEL.md`'s own "Scenario 1"–"Scenario 5" (T-1 path
+  traversal, T-3 exfiltration, T-6 privilege escalation, T-8 out-of-order
+  action, T-9 rate exhaustion), each run both without and with the
+  firewall — the comparison itself is the evidence. 13 regression tests
+  in `tests/test_attack_scenarios.py`.
+- `demo_agent/full_demo.py`: the interactive end-to-end walkthrough with
+  a real HITL approval prompt (verified with a piped `y` answer, bounded
+  by a timeout, not left to hang).
+- `dashboard/app.py`: rewritten from the Phase 0 static placeholder into
+  a real, read-only Streamlit dashboard over the audit database —
+  integrity status, ALLOW/DENY/NEEDS_APPROVAL counts, a per-tool chart,
+  a filterable audit trail table. Verified by actually launching it
+  headless against a populated database and hitting its health endpoint
+  (`/_stcore/health` → `ok`), not merely written and assumed to work.
+  New pinned dependency: `pandas==3.0.5` (previously only transitive via
+  streamlit).
+- `scripts/run_bypass_suite.py`: replays the 44-entry bypass corpus
+  against the real canonicalizers, sharing `test_canonicalize.py`'s
+  exact logic. `scripts/run_all_demos.py`: orchestrates the policy-load
+  check, the bypass suite, and all 5 attack scenarios into one
+  unattended run with a summary/exit code — deliberately excludes
+  `full_demo.py` (blocks on real interactive input). `scripts/__init__.py`
+  added so the two scripts can import cleanly between each other.
+  6 regression tests in `tests/test_demo_wiring.py`.
+- `docs/DEMO_GUIDE.md` (new) and
+  `docs/knowledge/concepts/demo-integration.md` (new) document how to
+  run everything and how the pieces fit together.
+- **Verified locally**: `ruff check .`, `black --check .`,
+  `mypy firewall/`, `pytest -v` (389 passed, 1 skipped), `bandit -r firewall/`
+  (0 issues), `pip-audit -r requirements.txt` (0 known vulns),
+  `python scripts/run_all_demos.py` (exit code 0, all 3 stages PASS), a
+  headless dashboard launch + health check against real populated data,
+  and a real interactive `full_demo.py` run with a piped approval answer.
+- **Known issues**: see `LIMITATIONS.md`'s Phase 6 section —
+  `dashboard/app.py`/`full_demo.py` have no dedicated pytest files
+  (not meaningfully unit-testable, same precedent as
+  `interception_demo.py`); the mocked tools' deliberate naivety is not a
+  claim about production tool design; some demo console output can
+  mojibake on a non-UTF-8 Windows codepage (cosmetic, traced to
+  `firewall/anomaly.py`'s own reason strings, not fixed in this phase).
 
 ### [ ] PHASE 7 — Evaluation
 - `tests/evaluation.py` → `EVALUATION_RESULTS.md`: block rate, false
@@ -397,5 +460,8 @@ engine ever sees a raw argument.
   above. Committed as `aca15b7`; the fix for `scripts/safe_push.sh`
   itself as `f0b6dbd`; the post-Phase-5 security review pass as
   `fac4325`. All pushed to `origin/main`.
-- Ready to proceed to Phase 6 (Dashboard + Integration + Attack
-  Scenarios) upon confirmation.
+- Phase 6 verification commands all actually run — see command list
+  above. Staged locally, not yet committed — per CLAUDE.md §3's
+  phase-gating rule, work stops at "phase done, summarized" and waits
+  for explicit confirmation before committing.
+- Ready to proceed to Phase 7 (Evaluation) upon confirmation.
