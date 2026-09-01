@@ -27,7 +27,7 @@ sqlalchemy==2.0.52
 
 # Web API & Dashboard
 fastapi==0.141.1
-uvicorn==0.52.2
+uvicorn==0.52.4
 streamlit==1.61.1
 # Previously only a transitive dependency of streamlit; dashboard/app.py
 # (Phase 6) now imports it directly to build the audit-trail DataFrame.
