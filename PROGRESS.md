@@ -323,8 +323,7 @@ engine ever sees a raw argument.
   doesn't wire this up yet (Phase 6's task).
 
 ### Post-Phase-5 security review pass
-- **Completed**: 2026-09-01 (same day as Phase 5) · **Commit**: pending
-  (staged locally).
+- **Completed**: 2026-09-01 (same day as Phase 5) · **Commit**: `fac4325`.
 - User-requested bug/vulnerability/weakness pass on `firewall/hitl.py`
   and its wiring, immediately after Phase 5 shipped and before it had
   had any adversarial look.
@@ -396,7 +395,7 @@ engine ever sees a raw argument.
   `1bcc6d3`.
 - Phase 5 verification commands all actually run — see command list
   above. Committed as `aca15b7`; the fix for `scripts/safe_push.sh`
-  itself as `f0b6dbd`. The post-Phase-5 security review pass (3 more
-  bugs found and fixed) is staged locally, not yet committed.
+  itself as `f0b6dbd`; the post-Phase-5 security review pass as
+  `fac4325`. All pushed to `origin/main`.
 - Ready to proceed to Phase 6 (Dashboard + Integration + Attack
   Scenarios) upon confirmation.
