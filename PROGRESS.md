@@ -359,7 +359,7 @@ engine ever sees a raw argument.
   guard catches this specific bug class, not a genuinely new mechanism.
 
 ### [x] PHASE 6 — Dashboard + Integration + Attack Scenarios
-- **Completed**: 2026-09-01 · **Commit**: pending (staged locally).
+- **Completed**: 2026-09-01 · **Commit**: `cb81fc7`.
 - `demo_agent/tools.py`: the 5 mocked tools, deliberately with NO
   built-in argument validation (naive, like a typical unprotected tool
   integration would be) — `read_file` is the one that touches a real
@@ -461,7 +461,5 @@ engine ever sees a raw argument.
   itself as `f0b6dbd`; the post-Phase-5 security review pass as
   `fac4325`. All pushed to `origin/main`.
 - Phase 6 verification commands all actually run — see command list
-  above. Staged locally, not yet committed — per CLAUDE.md §3's
-  phase-gating rule, work stops at "phase done, summarized" and waits
-  for explicit confirmation before committing.
+  above. Committed as `cb81fc7`, pushed to `origin/main`.
 - Ready to proceed to Phase 7 (Evaluation) upon confirmation.
